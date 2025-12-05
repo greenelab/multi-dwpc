@@ -1,0 +1,23 @@
+name: multi_dwpc
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.13
+  - pandas
+  - numpy
+  - scipy
+  - scikit-learn
+  - statsmodels
+  - matplotlib
+  - seaborn
+  - jupyterlab
+  - papermill
+  - tqdm
+  - httpx
+  - pyarrow
+  - pip
+  - pip:
+    - hetmatpy==0.1.0
+    - hetnetpy @ git+https://github.com/hetio/hetio.git@0a81e9ea675e2c20f235f5d74598053c1332cb85
+    - hetnet-analysis @ git+https://github.com/CU-DBMI/hetionet-analysis.git@f371064da1498ac984aa6ec6ed0ba2739c7b0259

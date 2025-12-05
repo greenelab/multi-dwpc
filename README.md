@@ -1,2 +1,40 @@
 # multi-dwpc
 This repository contains scripts testing aggregate degree weighted path count (DWPC) statistics. 
+
+# Motivation
+Pathway search methods focus on explaining the relationship between two entities, such as a gene and a disease. However, most diseases are the result of more complex interactions between multiple genes and molecular features. For example, many cancers result from mutations across multiple genes. Trisomy 21 is a condition based on the upregulation of the ~225 genes on HSA21, and single-gene searches do not capture the collective mechanistic evidence. Sets of coexpressed or interacting genes thus better capture the cause or effect of disease.  Methods of gene set enrichment do not clearly represent relationships across data modalities that are better captured within a heterogeneous knowledge graph. 
+
+Here we present the scripts for a proof of concept experiment that considers whether the aggregated pathway statistics (mean/median of DWPC) between GO terms and gene annotations differ between the 2015 and 2024 additions. The hypothesis is that the connectivity of hetionet (i.e., the shared connections of genes and pathways to other nodes such as compound, anatomy, and disease) between the 2015 and 2024 GO annotations will result in similar aggregated degree-adjusted pathway scores. Similar scores for the updated GO terms demonstrate the potential of aggregated pathway scores for identifying shared mechanisms of genes not previously annotated to a single shared node (e.g., GO pathway or disease).
+
+# Previous work
+Several of the scripts build on previous work from the Greene Lab and [hetionet project](https://het.io/), including the [connectivity-search-analyses](https://github.com/greenelab/connectivity-search-analyses) repository, [hetio/hetnetpy](https://github.com/hetio/hetnetpy), and [hetio/hetmatpy](https://github.com/hetio/hetmatpy). 
+
+# Getting Started
+
+### Clone the repository
+
+```bash
+git clone https://github.com/greenelab/multi-dwpc.git
+cd multi-dwpc
+```
+
+### Create the environment
+
+```bash
+conda env create -f env/environment.yml
+conda activate multi_dwpc
+```
+
+### Run the pipeline
+
+```bash
+mkdir -p notebooks/executed
+papermill notebooks/1.1_data_loading.ipynb notebooks/executed/1.1_data_loading.ipynb
+```
+
+Pipeline notebooks:
+
+1. **1.1_data_loading.ipynb** - Loads Hetionet v1.0 (2016) and GO annotations (2024), filters to common genes and GO terms
+
+# AI Assistance
+This project utilized the AI assistant Claude, developed by Anthropic, during the development process. Its assistance included generating initial code snippets and improving documentation. All AI-generated content was reviewed, tested, and validated by human developers.
