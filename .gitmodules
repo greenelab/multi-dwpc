@@ -1,0 +1,4 @@
+[submodule "connectivity-search-backend"]
+	path = connectivity-search-backend
+	url = https://github.com/lagillenwater/connectivity-search-backend.git
+	branch = missing-dgp

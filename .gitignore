@@ -48,3 +48,6 @@ htmlcov/
 /data/
 /output/
 /gene_ontology/
+
+# Connectivity search backend data
+connectivity-search-backend/data/postgres/
