@@ -52,6 +52,7 @@ htmlcov/
 /gene_ontology/
 
 # notes
+docs/
 src_2/
 
 # Connectivity search backend data
