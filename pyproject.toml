@@ -13,11 +13,10 @@ dependencies = [
     "statsmodels",
     "matplotlib",
     "seaborn",
-    "jupyterlab",
-    "jupytext",
     "tqdm",
     "httpx",
     "pyarrow",
+    "streamlit",
     "hetmatpy==0.1.0",
     "hetnetpy @ git+https://github.com/hetio/hetio.git@0a81e9ea675e2c20f235f5d74598053c1332cb85",
     "hetnet-analysis @ git+https://github.com/CU-DBMI/hetionet-analysis.git@f371064da1498ac984aa6ec6ed0ba2739c7b0259",
@@ -25,7 +24,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "jupytext",
     "poethepoet",
 ]
 
@@ -35,25 +33,81 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["src"]
 
 [tool.poe.tasks]
-# Individual pipeline steps
-load-data = "python scripts/load_data.py"
-filter-change = "python scripts/percent_change_and_filtering.py"
-go-hierarchy-analysis = "python scripts/go_hierarchy_analysis.py"
-filter-jaccard = "python scripts/jaccard_similarity_and_filtering.py"
-gen-permutation = "python scripts/permutation_null_datasets.py"
-gen-random = "python scripts/random_null_datasets.py"
+# Data preparation
+load-data = "python scripts/data_prep/load_data.py"
+filter-change = "python scripts/data_prep/percent_change_and_filtering.py"
+go-hierarchy-analysis = "python scripts/data_prep/go_hierarchy_analysis.py"
+filter-jaccard = "python scripts/data_prep/jaccard_similarity_and_filtering.py"
+gen-permutation = "python scripts/data_prep/build_null_datasets.py --method permutation"
+gen-random = "python scripts/data_prep/build_null_datasets.py --method random"
 
-# DWPC computation
-# Option A: Direct matrix computation (no Docker required)
-compute-dwpc-direct = "python scripts/compute_dwpc_direct.py"
+# DWPC computation (direct)
+compute-dwpc-direct = "python scripts/data_prep/compute_dwpc_direct.py"
+warmup-dwpc-cache = { shell = "python scripts/data_prep/compute_dwpc_direct.py --warmup-cache --output-dir ${YEAR_DWPC_OUTPUT_DIR:-output/dwpc_direct/all_GO_positive_growth} --n-workers ${YEAR_DWPC_WARMUP_N_WORKERS:-2}" }
 
-# Testing
-test-dwpc-accuracy = "python scripts/test_dwpc_accuracy.py"
-benchmark-dwpc = "python scripts/benchmark_dwpc_methods.py"
+# DWPC computation (API via connectivity-search-backend)
+lookup-dwpc-api = "python scripts/api/lookup_dwpc_api.py"
+lookup-dwpc-api-with-docker = { shell = "COMPOSE_PROGRESS=plain open -a Docker && until docker info >/dev/null 2>&1; do echo 'Waiting for Docker daemon...'; sleep 5; done && cd connectivity-search-backend && COMPOSE_PROGRESS=plain ./run_stack.sh up --build -d && cd .. && python scripts/api/wait_for_api.py && poe lookup-dwpc-api && cd connectivity-search-backend && COMPOSE_PROGRESS=plain docker compose down" }
+
+# DWPC validation and benchmarking
+validate-dwpc-concordance = "python scripts/api/validate_dwpc_concordance.py"
+test-dwpc-accuracy = "python scripts/api/test_dwpc_accuracy.py"
+benchmark-dwpc = "python scripts/api/benchmark_dwpc_methods.py"
+benchmark-dwpc-plots = "python scripts/visualization/plot_dwpc_benchmark.py"
+
+# Year experiments
+year-null-variance-exp = { shell = "python3 scripts/experiments/null_variance_experiment.py --analysis-type year --results-dir ${YEAR_NULL_VAR_RESULTS_DIR:-output/dwpc_direct/all_GO_positive_growth/results} --output-dir ${YEAR_NULL_VAR_OUTPUT_DIR:-output/year_null_variance_exp} --b-values ${YEAR_NULL_VAR_B_VALUES:-1,2,5,10,20} --seeds ${YEAR_NULL_VAR_SEEDS:-11,22,33,44,55}" }
+year-null-variance-plots = { shell = "python3 scripts/visualization/plot_null_variance_results.py --analysis-type year --analysis-dir ${YEAR_NULL_VAR_ANALYSIS_DIR:-output/year_null_variance_exp/year_null_variance_experiment}" }
+year-rank-stability-exp = { shell = "python3 scripts/experiments/rank_stability_experiment.py --analysis-type year --results-dir ${YEAR_RANK_STAB_RESULTS_DIR:-output/dwpc_direct/all_GO_positive_growth/results} --output-dir ${YEAR_RANK_STAB_OUTPUT_DIR:-output/year_rank_stability_exp} --b-values ${YEAR_RANK_STAB_B_VALUES:-1,2,5,10,20} --seeds ${YEAR_RANK_STAB_SEEDS:-11,22,33,44,55} --top-k-metapaths ${YEAR_RANK_STAB_TOP_K:-10}" }
+year-rank-stability-plots = { shell = "python3 scripts/visualization/plot_rank_stability_results.py --analysis-type year --analysis-dir ${YEAR_RANK_STAB_ANALYSIS_DIR:-output/year_rank_stability_exp/year_rank_stability_experiment}" }
+year-rank-seed-comparisons = { shell = "python3 scripts/visualization/plot_rank_seed_comparisons.py --analysis-type year --analysis-dir ${YEAR_RANK_STAB_ANALYSIS_DIR:-output/year_rank_stability_exp/year_rank_stability_experiment} --reference-seed ${YEAR_RANK_REF_SEED:-11}" }
+year-go-term-support = { shell = "python3 scripts/visualization/year_go_term_support.py --workspace-dir ${YEAR_GO_SUPPORT_WORKSPACE_DIR:-output/dwpc_direct/all_GO_positive_growth} --go-support-output ${YEAR_GO_SUPPORT_OUTPUT:-output/year_direct_go_term_support.csv} --global-support-output ${YEAR_GLOBAL_SUPPORT_OUTPUT:-output/year_direct_global_metapath_support.csv}" }
+year-snapshot-rank-similarity = { shell = "python3 scripts/visualization/year_snapshot_rank_similarity.py --score-source ${YEAR_SNAPSHOT_SCORE_SOURCE:-direct} --results-dir ${YEAR_SNAPSHOT_RESULTS_DIR:-output/dwpc_direct/all_GO_positive_growth/results} --data-dir ${YEAR_SNAPSHOT_DATA_DIR:-data} --output-dir ${YEAR_SNAPSHOT_OUTPUT_DIR:-output/year_direct_snapshot_rank_similarity} --support-path ${YEAR_SNAPSHOT_SUPPORT_PATH:-output/year_direct_global_metapath_support.csv} --rank-metric ${YEAR_SNAPSHOT_RANK_METRIC:-support_fraction} --year-a ${YEAR_SNAPSHOT_YEAR_A:-2016} --year-b ${YEAR_SNAPSHOT_YEAR_B:-2024} --top-k-values ${YEAR_SNAPSHOT_TOP_K_VALUES:-5,10,20} --rbo-p ${YEAR_SNAPSHOT_RBO_P:-0.9}" }
+
+# Year API analysis and sensitivity
+year-api-compare-to-mean-dwpc = { shell = "python3 scripts/api/year_api_compare_statistics_to_mean_dwpc.py --results-dir ${YEAR_API_RESULTS_DIR:-output/dwpc_com/all_GO_positive_growth/results} --data-dir ${YEAR_API_DATA_DIR:-data} --output-dir ${YEAR_API_COMPARE_OUTPUT_DIR:-output/year_api_stat_compare} --rbo-p ${YEAR_API_COMPARE_RBO_P:-0.9}" }
+year-api-sampled-statistics-analysis = { shell = "python3 scripts/api/year_api_sampled_statistics_analysis.py --output-dir ${YEAR_API_SAMPLED_STATS_OUTPUT_DIR:-output/year_api_permutation_sensitivity} --data-dir ${YEAR_API_DATA_DIR:-data} --intermediate-dir ${YEAR_API_INTERMEDIATE_DIR:-output/intermediate} --n-go-terms ${YEAR_API_N_GO_TERMS:-50} --sample-seed ${YEAR_API_SAMPLE_SEED:-42} --n-permutations ${YEAR_API_N_PERMUTATIONS:-100} --b-values ${YEAR_API_B_VALUES:-1,2,5,10,20,50,100} --resample-seeds ${YEAR_API_RESAMPLE_SEEDS:-11,22,33,44,55}" }
+
+# LV experiment preparation
+lv-prepare-exp = { shell = "python3 scripts/experiments/lv_prepare_experiment.py --output-dir ${LV_OUTPUT_DIR:-output/lv_experiment} --lv-loadings ${LV_LOADINGS_PATH} --resume --metapath-limit-per-target ${LV_METAPATH_LIMIT:-2}" }
+lv-gen-permutation = { shell = "python3 scripts/experiments/lv_generate_control_replicates.py --output-dir ${LV_OUTPUT_DIR:-output/lv_experiment} --control permuted --n-replicates ${LV_N_REPLICATES:-100}" }
+lv-gen-random = { shell = "python3 scripts/experiments/lv_generate_control_replicates.py --output-dir ${LV_OUTPUT_DIR:-output/lv_experiment} --control random --n-replicates ${LV_N_REPLICATES:-100}" }
+lv-compute-replicate-summaries = { shell = "python3 scripts/experiments/lv_compute_replicate_summaries.py --output-dir ${LV_OUTPUT_DIR:-output/lv_experiment}" }
+
+# LV experiments
+lv-null-variance-exp = { shell = "python3 scripts/experiments/null_variance_experiment.py --analysis-type lv --output-dir ${LV_OUTPUT_DIR:-output/lv_experiment} --b-values ${LV_NULL_VAR_B_VALUES:-1,2,5,10,20} --seeds ${LV_NULL_VAR_SEEDS:-11,22,33,44,55}" }
+lv-null-variance-plots = { shell = "python3 scripts/visualization/plot_null_variance_results.py --analysis-type lv --analysis-dir ${LV_NULL_VAR_ANALYSIS_DIR:-output/lv_experiment/lv_null_variance_experiment}" }
+lv-rank-stability-exp = { shell = "python3 scripts/experiments/rank_stability_experiment.py --analysis-type lv --output-dir ${LV_OUTPUT_DIR:-output/lv_experiment} --b-values ${LV_RANK_STAB_B_VALUES:-1,2,5,10,20} --seeds ${LV_RANK_STAB_SEEDS:-11,22,33,44,55} --top-k-metapaths ${LV_RANK_STAB_TOP_K:-5,10}" }
+lv-rank-stability-plots = { shell = "python3 scripts/visualization/plot_rank_stability_results.py --analysis-type lv --analysis-dir ${LV_RANK_STAB_ANALYSIS_DIR:-output/lv_experiment/lv_rank_stability_experiment}" }
+lv-rank-seed-comparisons = { shell = "python3 scripts/visualization/plot_rank_seed_comparisons.py --analysis-type lv --analysis-dir ${LV_RANK_STAB_ANALYSIS_DIR:-output/lv_experiment/lv_rank_stability_experiment} --reference-seed ${LV_RANK_REF_SEED:-11}" }
+
+# LV multi-DWPC pipeline stages
+lv-top-genes = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage top-genes --lv-loadings ${LV_LOADINGS_PATH} --output-dir ${LV_OUTPUT_DIR:-output/lv_multidwpc}" }
+lv-target-sets = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage target-sets --output-dir ${LV_OUTPUT_DIR:-output/lv_multidwpc}" }
+lv-real-dwpc = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage real-dwpc --output-dir ${LV_OUTPUT_DIR:-output/lv_multidwpc}" }
+lv-precompute-scores = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage precompute-scores --output-dir ${LV_OUTPUT_DIR:-output/lv_multidwpc} --n-workers-precompute ${LV_N_WORKERS_PRECOMP:-4} --max-metapath-length ${LV_MAX_METAPATH_LENGTH:-3}" }
+lv-nulls = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage nulls --output-dir ${LV_OUTPUT_DIR:-output/lv_multidwpc} --n-degree-bins ${LV_N_DEGREE_BINS:-10} --b-min ${LV_B_MIN:-200} --b-max ${LV_B_MAX:-1000} --b-batch ${LV_B_BATCH:-100} --adaptive-p-low ${LV_ADAPTIVE_P_LOW:-0.005} --adaptive-p-high ${LV_ADAPTIVE_P_HIGH:-0.20}" }
+lv-stats = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage stats --output-dir ${LV_OUTPUT_DIR:-output/lv_multidwpc}" }
+lv-top-subgraphs = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage top-subgraphs --output-dir ${LV_OUTPUT_DIR:-output/lv_multidwpc} --top-metapaths ${LV_TOP_METAPATHS:-10} --top-pairs ${LV_TOP_PAIRS:-10} --top-paths ${LV_TOP_PATHS:-5}" }
+lv-plot-subgraphs = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage plot-subgraphs --output-dir ${LV_OUTPUT_DIR:-output/lv_multidwpc}" }
+
+# LV pipeline shortcuts
+lv-pipeline-fast = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage pipeline-fast --resume --lv-loadings ${LV_LOADINGS_PATH} --output-dir ${LV_OUTPUT_DIR:-output/lv_multidwpc}" }
+lv-pipeline-fast-smoke = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage pipeline-fast --smoke --resume --output-dir output/lv_multidwpc_smoke_opt --metapath-limit-per-target 5 --b-min 20 --b-max 50 --b-batch 10" }
+lv-pipeline-subgraphs = { shell = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage pipeline-subgraphs --resume --output-dir ${LV_OUTPUT_DIR:-output/lv_multidwpc}" }
+lv-pipeline-smoke = "python3 scripts/experiments/lv_multidwpc_analysis.py --stage pipeline --smoke --output-dir output/lv_multidwpc_smoke"
+
+# Full analysis pipelines (local runners)
+run-year-pipeline = { shell = "python3 scripts/pipeline/run_year_pipeline.py --output-dir ${YEAR_PIPELINE_OUTPUT:-output/year_full_analysis} --year-output-dir ${YEAR_OUTPUT_DIR:-output/year_experiment}" }
+run-lv-pipeline = { shell = "python3 scripts/pipeline/run_lv_pipeline.py --output-dir ${LV_PIPELINE_OUTPUT:-output/lv_full_analysis} --lv-output-dirs ${LV_OUTPUT_DIRS:-output/lv_single_target_refactor}" }
 
 # Grouped tasks
-pipeline-production = "python scripts/pipeline_production.py"
 pipeline-null = ["gen-permutation", "gen-random"]
+direct-dwpc-analyses = ["compute-dwpc-direct", "year-null-variance-exp", "year-rank-stability-exp"]
+
+# Utilities
+clean = { shell = "rm -rf data/ output/ gene_ontology/" }
+download-lv-loadings = { shell = "python3 scripts/data_prep/download_lv_loadings.py --owner greenelab --repo phenoplier --ref main --source-path data/input/multiplier --exact-file multiplier_model_z.tsv.gz --output-dir ${LV_LOADINGS_DIR:-data/lv_loadings}" }
