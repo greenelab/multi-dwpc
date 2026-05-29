@@ -156,6 +156,7 @@ def query_intermediates_and_paths(
     target_type: str = "BP",
     path_top_k: int = 100,
     path_z_min: float = DEFAULT_PATH_Z_MIN,
+    debug: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Return ``(intermediates_df, paths_df, diagnostics)`` for a single metapath.
 
@@ -175,28 +176,37 @@ def query_intermediates_and_paths(
     valid_gene_ids = [int(g) for g in gene_ids if int(g) in gene_idx_map]
     target_pos = _target_position(hetmat, target_type, target_id)
 
-    # Manual pool-score diagnostic: call enumerate_paths directly for each gene.
-    from src.path_enumeration import enumerate_paths, parse_metapath
-    from src.dwpc_direct import reverse_metapath_abbrev
-    reversed_mp = reverse_metapath_abbrev(metapath)
-    nodes, edges = parse_metapath(reversed_mp)
-    gene_id_map = maps.id_to_pos.get("G", {})
+    # Optional manual pool-score diagnostic: re-enumerate paths per gene to
+    # surface pool statistics for debugging empty results. This duplicates the
+    # enumeration that enumerate_gene_intermediates performs below, so it is
+    # gated behind `debug` and off by default.
     pool_scores: list[float] = []
     genes_with_paths = 0
-    for gid in valid_gene_ids:
-        gpos = gene_id_map.get(gid) or gene_id_map.get(str(gid))
-        if gpos is None:
-            continue
-        try:
-            paths = enumerate_paths(
-                target_pos, gpos, nodes, edges, edge_loader,
-                top_k=path_top_k, degree_d=0.5,
-            )
-        except Exception:
-            continue
-        if paths:
-            genes_with_paths += 1
-            pool_scores.extend(s for s, _ in paths)
+    n_enumeration_errors = 0
+    if debug:
+        from src.path_enumeration import enumerate_paths, parse_metapath
+        from src.dwpc_direct import reverse_metapath_abbrev
+        reversed_mp = reverse_metapath_abbrev(metapath)
+        nodes, edges = parse_metapath(reversed_mp)
+        gene_id_map = maps.id_to_pos.get("G", {})
+        for gid in valid_gene_ids:
+            gpos = gene_id_map.get(gid) or gene_id_map.get(str(gid))
+            if gpos is None:
+                continue
+            try:
+                paths = enumerate_paths(
+                    target_pos, gpos, nodes, edges, edge_loader,
+                    top_k=path_top_k, degree_d=0.5,
+                )
+            except (FileNotFoundError, KeyError, ValueError):
+                # Expected per-gene failures (missing edge matrix, unmapped
+                # node, unparseable metapath); record and keep going. Anything
+                # else propagates so real bugs are not masked.
+                n_enumeration_errors += 1
+                continue
+            if paths:
+                genes_with_paths += 1
+                pool_scores.extend(s for s, _ in paths)
 
     pool_mean = float(np.mean(pool_scores)) if len(pool_scores) >= 2 else 0.0
     pool_std = float(np.std(pool_scores, ddof=1)) if len(pool_scores) >= 2 else 0.0
@@ -221,8 +231,10 @@ def query_intermediates_and_paths(
     diagnostics = {
         "n_input_genes": len(gene_ids),
         "n_genes_in_hetmat": len(valid_gene_ids),
+        "diagnostic_pass_run": debug,
         "n_genes_with_paths": genes_with_paths,
         "n_paths_total": len(pool_scores),
+        "n_diagnostic_enumeration_errors": n_enumeration_errors,
         "path_pool_mean": pool_mean,
         "path_pool_std": pool_std,
         "path_score_cutoff": path_cutoff,

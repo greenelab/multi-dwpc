@@ -185,8 +185,8 @@ def enumerate_gene_intermediates(
     record_paths: list[dict] | None = None,
     record_extra: dict | None = None,
     debug: bool = False,
-) -> dict[int, set[str]]:
-    """Enumerate paths for *genes* and return ``{gene_id: set_of_intermediate_ids}``.
+) -> tuple[dict[int, set[str]], int]:
+    """Enumerate paths for *genes* and return ``(gene_intermediates, genes_filtered_by_dwpc)``.
 
     The metapath is in Gene-first orientation.  Internally it is reversed for
     enumeration (``enumerate_paths`` walks source -> target, and source here is

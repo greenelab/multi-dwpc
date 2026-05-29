@@ -17,15 +17,23 @@ Build a public web tool that answers the question:
 
 The look-and-feel and infrastructure should mirror the greenelab connectivity-search stack ([search.het.io](https://search.het.io)) so users in the field experience continuity. The science layer (effect-size z-scores, intermediate sharing, surviving subpaths) is unique to multi-DWPC.
 
-A working Streamlit MVP exists at `app.py` and is the reference implementation for the science. This document specifies the production rebuild.
+A working Streamlit MVP exists at `app.py` and is the reference implementation for the science. 
+To run the app: 
+```bash
+streamlit run app.py
+```
 
 ## 2. greenelab connectivity-search
 
-The cloned reference is at `connectivity-search-backend/`. Companion frontend (not cloned here) lives at https://github.com/greenelab/connectivity-search-frontend.
+A cloned reference of the backend may be found within this project at `connectivity-search-backend/`. Companion frontend (not cloned here) lives at https://github.com/greenelab/connectivity-search-frontend.
 
 ### 2.1 What connectivity-search does today
 
-The connectivity-search stack answers a **pair-based** question: given a single source node and a single target node in Hetionet v1.0, return all metapaths connecting them, with precomputed path counts, DWPC values, and degree-grouped permutation null statistics. Results are precomputed and stored in Postgres; only the actual paths (Cypher traversal) are computed on demand from Neo4j.
+The connectivity-search stack answers a **pair-based** question:
+
+> "Given a single source node and a single target node in Hetionet v1.0, how can we return all metapaths connecting them, with precomputed path counts, DWPC values, and degree-grouped permutation null statistics?"
+
+Results are precomputed and stored in Postgres; only the actual paths (Cypher traversal) are computed on demand from Neo4j.
 
 Endpoints (`connectivity-search-backend/dj_hetmech/urls.py`):
 
@@ -74,17 +82,12 @@ Schema (`dj_hetmech_app/models.py`):
 
 <img src ="figures/web_tool/architecture.svg" width =70%>
 
-## 4. UI
-
-The UI should follow the creative workflow of the connectivity search tool at het.io. I think that the tool should either have its own landing page from the het.io Explore tab:
-
-<img src = "figures/web_tool/explore_tools.png" width = 50%>
 
 ## 3. Functional requirements
 
 ### 3.1 Inputs
 
-- **Source nodes**: list of features (satart with gene symbols or Entrez IDs), one per line or comma-separated. Symbols must resolve to a Hetionet Gene node; unresolved tokens are returned in a warnings array.
+- **Source nodes**: list of features (start with gene symbols or Entrez IDs), one per line or comma-separated. Symbols must resolve to a Hetionet Gene node; unresolved tokens are returned in a warnings array.
 - **Target node**: single node, any metanode supported by the metapath enumerator (MVP: Biological Process only, matching `app.py`).
 - **Optional advanced parameters** (collapsed by default):
   - `b` (null replicates), default 20, range 5–100
@@ -106,9 +109,9 @@ Three views, each returned by a separate endpoint:
 
 # 4. UI
 
-## UI design ideas
+## 4.1 UI design ideas
 
-The UI should follow the creative workflow of the connectivity search tool at het.io. I think that the tool should either have its own landing page from the het.io Explore tab:
+The UI should follow the creative workflow of the connectivity search tool at het.io. The tool should either have its own landing page from the het.io Explore tab:
 
 <img src="figures/web_tool/explore_tools.png" alt="explore tools" width="50%">
 
@@ -117,7 +120,7 @@ OR it could be a separate tab for the connectivity search tool:
 <img src="figures/web_tool/connectivity_search_scores.png" alt="explore tools" width="50%">
 
 
-The multi-DWPC tools should follow a similar flow to the connecitivity search tool between a single source and target. For example, the user should input a a list of genes and a single target and get a list of metapath rankings. 
+The multi-DWPC tools should follow a similar flow to the connectivity search tool between a single source and target. For example, the user should input a list of genes and a single target and get a list of metapath rankings. 
 
 <p>
   <img src="figures/web_tool/connectivity_search_scores.png" width="48%">
@@ -134,7 +137,7 @@ Below the scores should show the graph outputs.
 
 These are all suggestions. Very open to other recommendations. 
 
-## Outputs
+## 4.2 Outputs
 
 The user should be able to output a ranked list of metapaths, with scores and signficance values as seen below.
 <img src="figures/web_tool/connectivity_search_scores.png" width="48%">
@@ -155,7 +158,7 @@ And subgraphs for the subgraphs of top paths, the subgraph of top paths with sha
 
 # 5. Timeline
 
-Target: 2-3 months to active public tool. 
+Target: 2-3 months (June-August 2026) to active public tool. 
 
 ## 5.1 Milestones
 
@@ -172,6 +175,7 @@ Target: 2-3 months to active public tool.
 
 - Periodic in-person or zoom meetings to coordinate and answer questions
 - Slack for asynchronous messaging: multi-dwpc channel in the GreeneLab Slack
+- Issue creation and discussion mainly within the multi-dwpc repo, referring to involved repos when necessary
 
 ## 5.2 Meeting Cadence
 

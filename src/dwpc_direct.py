@@ -160,14 +160,11 @@ def reverse_metapath_abbrev(metapath: str) -> str:
         elif metapath[pos] in edge_abbrevs:
             tokens.append(metapath[pos])
             pos += 1
-        elif metapath[pos] == ">":
-            tokens.append(">")
-            pos += 1
-        elif metapath[pos] == "<":
-            tokens.append("<")
-            pos += 1
         else:
-            pos += 1
+            raise ValueError(
+                f"Unrecognized character {metapath[pos]!r} at position {pos} "
+                f"in metapath {metapath!r}"
+            )
 
     direction_map = {">": "<", "<": ">"}
     reversed_tokens = []
@@ -341,20 +338,44 @@ def parse_metapath(metapath_abbrev: str, metagraph: Dict) -> List[Dict]:
                 "abbrev": forward_key
             }
 
+    node_abbrevs = {
+        metagraph["kind_to_abbrev"][kind] for kind in metagraph["metanode_kinds"]
+    }
+
     edges = []
     pos = 0
     while pos < len(metapath_abbrev):
+        remaining = metapath_abbrev[pos:]
+        # A lone trailing metanode terminates the walk; it is not followed by
+        # another metaedge.
+        if remaining in node_abbrevs:
+            break
+
         found = False
-        for length in [4, 3]:
-            if pos + length <= len(metapath_abbrev):
-                candidate = metapath_abbrev[pos:pos + length]
-                if candidate in metaedge_info:
-                    edges.append(metaedge_info[candidate])
-                    pos += length - 1
-                    found = True
-                    break
+        # Try longest candidates first so a multi-character node abbreviation
+        # (e.g. "BP") is matched before a shorter prefix.
+        for length in (5, 4, 3):
+            if pos + length > len(metapath_abbrev):
+                continue
+            info = metaedge_info.get(metapath_abbrev[pos:pos + length])
+            if info is None:
+                continue
+            edges.append(info)
+            # Consecutive metaedges share the trailing metanode, so advance to
+            # the start of that node rather than past it. Its abbreviation may
+            # span multiple characters (e.g. "BP"), so derive the offset from
+            # the matched edge's target kind instead of assuming one character.
+            tail_abbrev = metagraph["kind_to_abbrev"][info["target"]]
+            pos += length - len(tail_abbrev)
+            found = True
+            break
+
         if not found:
-            pos += 1
+            raise ValueError(
+                f"Could not parse metaedge at position {pos} in metapath "
+                f"{metapath_abbrev!r}; remaining substring {remaining!r} does "
+                f"not start with a known metaedge abbreviation"
+            )
 
     return edges
 
@@ -470,8 +491,13 @@ class HetMat:
         self._dwpc_cache_csc: Dict[Tuple[str, float], sparse.csc_matrix] = {}
 
     def _get_cache_path(self, metapath: str, damping: float) -> Path:
-        """Get the disk cache path for a DWPC matrix."""
-        return self.cache_dir / f"dwpc_{metapath}_d{damping:.2f}.npz"
+        """Get the disk cache path for a DWPC matrix.
+
+        Uses ``repr(float(damping))`` so the key uniquely identifies the damping
+        value and round-trips exactly (e.g. 0.33 and 0.333 get distinct keys),
+        rather than rounding to 2 decimals which would alias them.
+        """
+        return self.cache_dir / f"dwpc_{metapath}_d{float(damping)!r}.npz"
 
     def _load_from_disk(self, metapath: str, damping: float) -> Optional[sparse.csr_matrix]:
         """Load DWPC matrix from disk cache if available."""
@@ -904,14 +930,7 @@ def get_gene_bp_metapaths(metagraph: Dict, max_length: int = 4) -> List[str]:
         "GpCCpGpBP",
     ]
 
-    existing = []
-    edge_files = list((Path(metagraph.get("_data_dir", ".")) / "edges").glob("*.npz"))
-    available_edges = {f.stem.replace(".sparse", "") for f in edge_files}
-
-    for mp in gene_bp_metapaths:
-        existing.append(mp)
-
-    return existing
+    return gene_bp_metapaths
 
 
 def create_node_index_mapping(
@@ -948,8 +967,14 @@ def create_node_index_mapping(
     source_nodes = hetmat.get_nodes(source_type)
     target_nodes = hetmat.get_nodes(target_type)
 
-    source_id_to_idx = dict(zip(source_nodes["identifier"], source_nodes.index))
-    target_id_to_idx = dict(zip(target_nodes["identifier"], target_nodes.index))
+    # Prefer the explicit "position" column (matrix row/col index) when present;
+    # fall back to the DataFrame index only if the node TSV lacks it. Using
+    # .index unconditionally can misalign IDs to matrix positions if the rows
+    # are ever reordered or filtered.
+    source_pos = source_nodes["position"] if "position" in source_nodes else source_nodes.index
+    target_pos = target_nodes["position"] if "position" in target_nodes else target_nodes.index
+    source_id_to_idx = dict(zip(source_nodes["identifier"], source_pos))
+    target_id_to_idx = dict(zip(target_nodes["identifier"], target_pos))
 
     result_df = df.copy()
     result_df["source_idx"] = result_df[source_id_col].map(source_id_to_idx)

@@ -44,14 +44,6 @@ poe gen-random
 poe compute-dwpc-direct
 ```
 
-For end-to-end runs, use the unified pipeline runners (or the HPC submit scripts):
-
-```bash
-# Year track end-to-end (B-selection -> intermediate sharing -> consumables)
-python3 scripts/pipeline/run_year_pipeline.py --output-dir output/year_full_analysis
-
-# LV track end-to-end
-python3 scripts/pipeline/run_lv_pipeline.py --output-dir output/lv_full_analysis
 ```
 
 ### Available tasks
@@ -63,7 +55,6 @@ Run `poe --help` to see all available tasks:
 | **Data prep** | |
 | `load-data` | Load Hetionet v1.0 (2016) and GO annotations (2024) |
 | `filter-change` | Percent-change + IQR filtering (all_GO_positive_growth) |
-| `go-hierarchy-analysis` | GO hierarchy metrics + parents_GO_postive_growth |
 | `filter-jaccard` | Jaccard filtering (all_GO, plus parents_GO when available) |
 | `gen-permutation` | Generate permutation null datasets (year cohorts) |
 | `gen-random` | Generate promiscuity-matched random null datasets (year cohorts) |
@@ -126,7 +117,6 @@ Layout (under `scripts/`):
 - `select_top_go_terms.py` — Pick top-N GO terms by intermediate-sharing signal (year only)
 - `generate_global_summary.py` — Roll up per-metapath sharing into a global summary
 - `generate_gene_table.py` — Per-gene connectivity + DWPC table (consumable for downstream visualization)
-- `run_year_pipeline.py` / `run_lv_pipeline.py` — End-to-end orchestrators that chain the above stages
 
 #### `experiments/` — null-variance and rank-stability experiments
 - `null_variance_experiment.py --analysis-type {year,lv}` — Null variance across B/seed
@@ -299,10 +289,7 @@ metapath rank-stability analyses by chaining the per-stage poe tasks (or
 use the end-to-end runner / HPC submit script):
 
 ```bash
-# Local end-to-end (uses run_year_pipeline.py to orchestrate stages)
-python3 scripts/pipeline/run_year_pipeline.py --output-dir output/year_full_analysis
-
-# Or assemble manually from the per-stage poe tasks
+# Assemble from the per-stage poe tasks
 poe gen-permutation
 poe gen-random
 poe compute-dwpc-direct
