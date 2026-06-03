@@ -1,4 +1,4 @@
-"""Shared intermediate sharing computation for year and LV analyses.
+"""Intermediate sharing computation for year and LV analyses.
 
 Functions here are used by ``scripts/pipeline/intermediate_sharing.py`` (which
 dispatches on ``--analysis-type {year,lv}``).  Analysis-specific logic
