@@ -27,7 +27,7 @@ References:
 """
 
 import json
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -160,15 +160,10 @@ def reverse_metapath_abbrev(metapath: str) -> str:
         elif metapath[pos] in edge_abbrevs:
             tokens.append(metapath[pos])
             pos += 1
-        elif metapath[pos] == ">":
-            tokens.append(">")
-            pos += 1
-        elif metapath[pos] == "<":
-            tokens.append("<")
-            pos += 1
         else:
             raise ValueError(
-                f"Unrecognized token in metapath abbreviation at position {pos}: {metapath[pos]!r}"
+                f"Unrecognized character {metapath[pos]!r} at position {pos} "
+                f"in metapath {metapath!r}"
             )
 
     direction_map = {">": "<", "<": ">"}
@@ -343,23 +338,43 @@ def parse_metapath(metapath_abbrev: str, metagraph: Dict) -> List[Dict]:
                 "abbrev": forward_key
             }
 
+    node_abbrevs = {
+        metagraph["kind_to_abbrev"][kind] for kind in metagraph["metanode_kinds"]
+    }
+
     edges = []
     pos = 0
     while pos < len(metapath_abbrev):
+        remaining = metapath_abbrev[pos:]
+        # A lone trailing metanode terminates the walk; it is not followed by
+        # another metaedge.
+        if remaining in node_abbrevs:
+            break
+
         found = False
-        for length in [4, 3]:
-            if pos + length <= len(metapath_abbrev):
-                candidate = metapath_abbrev[pos:pos + length]
-                if candidate in metaedge_info:
-                    edges.append(metaedge_info[candidate])
-                    # Advance to the next node position (last character of this match).
-                    pos += length - 1
-                    found = True
-                    break
+        # Try longest candidates first so a multi-character node abbreviation
+        # (e.g. "BP") is matched before a shorter prefix.
+        for length in (5, 4, 3):
+            if pos + length > len(metapath_abbrev):
+                continue
+            info = metaedge_info.get(metapath_abbrev[pos:pos + length])
+            if info is None:
+                continue
+            edges.append(info)
+            # Consecutive metaedges share the trailing metanode, so advance to
+            # the start of that node rather than past it. Its abbreviation may
+            # span multiple characters (e.g. "BP"), so derive the offset from
+            # the matched edge's target kind instead of assuming one character.
+            tail_abbrev = metagraph["kind_to_abbrev"][info["target"]]
+            pos += length - len(tail_abbrev)
+            found = True
+            break
+
         if not found:
             raise ValueError(
-                f"Unable to parse metapath abbreviation '{metapath_abbrev}' at position "
-                f"{pos}: no matching metaedge for substring starting here."
+                f"Could not parse metaedge at position {pos} in metapath "
+                f"{metapath_abbrev!r}; remaining substring {remaining!r} does "
+                f"not start with a known metaedge abbreviation"
             )
 
     return edges
@@ -387,6 +402,27 @@ def get_metaedge_abbreviations(metagraph: Dict) -> List[str]:
         edge_abbrev = metagraph["kind_to_abbrev"][edge_type]
         abbreviations.append(f"{src_abbrev}{edge_abbrev}{tgt_abbrev}")
     return abbreviations
+
+
+def _compute_dwpc_matrix_worker(args: Tuple[str, str, float]) -> Tuple[str, sparse.csr_matrix]:
+    """
+    Compute one DWPC matrix in a subprocess.
+
+    This worker is defined at module scope so it can be pickled by
+    ProcessPoolExecutor. Each process creates its own hetmatpy object rather
+    than trying to serialize a shared instance from the parent process.
+    """
+    data_dir, metapath, damping = args
+    hetmatpy = HetMatPy(data_dir)
+    mp_obj = hetmatpy.metagraph.metapath_from_abbrev(metapath)
+    _, _, matrix = hetmatpy_dwpc(hetmatpy, mp_obj, damping=damping)
+
+    if not sparse.issparse(matrix):
+        matrix = sparse.csr_matrix(matrix)
+    else:
+        matrix = matrix.tocsr()
+
+    return metapath, matrix
 
 
 class HetMat:
@@ -455,9 +491,13 @@ class HetMat:
         self._dwpc_cache_csc: Dict[Tuple[str, float], sparse.csc_matrix] = {}
 
     def _get_cache_path(self, metapath: str, damping: float) -> Path:
-        """Get the disk cache path for a DWPC matrix."""
-        damping_str = repr(damping).replace(".", "p").replace("-", "m")
-        return self.cache_dir / f"dwpc_{metapath}_d{damping_str}.npz"
+        """Get the disk cache path for a DWPC matrix.
+
+        Uses ``repr(float(damping))`` so the key uniquely identifies the damping
+        value and round-trips exactly (e.g. 0.33 and 0.333 get distinct keys),
+        rather than rounding to 2 decimals which would alias them.
+        """
+        return self.cache_dir / f"dwpc_{metapath}_d{float(damping)!r}.npz"
 
     def _load_from_disk(self, metapath: str, damping: float) -> Optional[sparse.csr_matrix]:
         """Load DWPC matrix from disk cache if available."""
@@ -569,7 +609,8 @@ class HetMat:
         metapaths: List[str],
         damping: Optional[float] = None,
         n_workers: int = 4,
-        show_progress: bool = True
+        show_progress: bool = True,
+        cache_in_memory: bool = True,
     ):
         """
         Precompute and cache DWPC matrices for multiple metapaths in parallel.
@@ -584,6 +625,10 @@ class HetMat:
             Number of parallel workers
         show_progress : bool
             Show progress bar
+        cache_in_memory : bool
+            If False, completed matrices are written to disk and released instead
+            of being retained in the in-memory cache. Use for disk-cache warmup
+            jobs that have no follow-on computation and need bounded RAM.
         """
         damping = damping if damping is not None else self.damping
 
@@ -591,29 +636,27 @@ class HetMat:
         to_compute = []
         for mp in metapaths:
             cache_key = (mp, damping)
-            if cache_key not in self._dwpc_cache:
-                disk_matrix = self._load_from_disk(mp, damping)
-                if disk_matrix is not None:
+            if cache_key in self._dwpc_cache:
+                continue
+            disk_matrix = self._load_from_disk(mp, damping)
+            if disk_matrix is not None:
+                if cache_in_memory:
                     self._dwpc_cache[cache_key] = disk_matrix
-                else:
-                    to_compute.append(mp)
+                continue
+            to_compute.append(mp)
 
         if not to_compute:
             return
 
-        # Compute remaining matrices in parallel using ThreadPoolExecutor
-        # (ProcessPoolExecutor has issues with hetmatpy objects)
-        def compute_one(mp):
-            mp_obj = self._hetmatpy.metagraph.metapath_from_abbrev(mp)
-            _, _, matrix = hetmatpy_dwpc(self._hetmatpy, mp_obj, damping=damping)
-            if not sparse.issparse(matrix):
-                matrix = sparse.csr_matrix(matrix)
-            else:
-                matrix = matrix.tocsr()
-            return mp, matrix
+        # Use a top-level worker so each subprocess creates its own hetmatpy
+        # instance instead of attempting to pickle self._hetmatpy.
+        args_list = [(str(self.data_dir), mp, damping) for mp in to_compute]
 
-        with ThreadPoolExecutor(max_workers=n_workers) as executor:
-            futures = {executor.submit(compute_one, mp): mp for mp in to_compute}
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(_compute_dwpc_matrix_worker, args): args[1]
+                for args in args_list
+            }
 
             iterator = as_completed(futures)
             if show_progress:
@@ -622,8 +665,9 @@ class HetMat:
             for future in iterator:
                 mp, matrix = future.result()
                 cache_key = (mp, damping)
-                self._dwpc_cache[cache_key] = matrix
                 self._save_to_disk(mp, damping, matrix)
+                if cache_in_memory:
+                    self._dwpc_cache[cache_key] = matrix
 
     def get_dwpc_for_pairs(
         self,
@@ -886,13 +930,7 @@ def get_gene_bp_metapaths(metagraph: Dict, max_length: int = 4) -> List[str]:
         "GpCCpGpBP",
     ]
 
-    existing = []
-    edge_files = list((Path(metagraph.get("_data_dir", ".")) / "edges").glob("*.npz"))
-
-    for mp in gene_bp_metapaths:
-        existing.append(mp)
-
-    return existing
+    return gene_bp_metapaths
 
 
 def create_node_index_mapping(
@@ -929,19 +967,15 @@ def create_node_index_mapping(
     source_nodes = hetmat.get_nodes(source_type)
     target_nodes = hetmat.get_nodes(target_type)
 
-    # Prefer explicit matrix position column if available to avoid index/order bugs
-    if "position" in source_nodes.columns:
-        source_positions = source_nodes["position"]
-    else:
-        source_positions = source_nodes.index
+    # Prefer the explicit "position" column (matrix row/col index) when present;
+    # fall back to the DataFrame index only if the node TSV lacks it. Using
+    # .index unconditionally can misalign IDs to matrix positions if the rows
+    # are ever reordered or filtered.
+    source_pos = source_nodes["position"] if "position" in source_nodes else source_nodes.index
+    target_pos = target_nodes["position"] if "position" in target_nodes else target_nodes.index
+    source_id_to_idx = dict(zip(source_nodes["identifier"], source_pos))
+    target_id_to_idx = dict(zip(target_nodes["identifier"], target_pos))
 
-    if "position" in target_nodes.columns:
-        target_positions = target_nodes["position"]
-    else:
-        target_positions = target_nodes.index
-
-    source_id_to_idx = dict(zip(source_nodes["identifier"], source_positions))
-    target_id_to_idx = dict(zip(target_nodes["identifier"], target_positions))
     result_df = df.copy()
     result_df["source_idx"] = result_df[source_id_col].map(source_id_to_idx)
     result_df["target_idx"] = result_df[target_id_col].map(target_id_to_idx)

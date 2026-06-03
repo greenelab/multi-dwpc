@@ -18,6 +18,7 @@ dependencies = [
     "tqdm",
     "httpx",
     "pyarrow",
+    "streamlit",
     "hetmatpy==0.1.0",
     "hetnetpy @ git+https://github.com/hetio/hetio.git@0a81e9ea675e2c20f235f5d74598053c1332cb85",
     "hetnet-analysis @ git+https://github.com/CU-DBMI/hetionet-analysis.git@f371064da1498ac984aa6ec6ed0ba2739c7b0259",
@@ -41,7 +42,6 @@ include = ["src*"]
 # Individual pipeline steps
 load-data = "python scripts/load_data.py"
 filter-change = "python scripts/percent_change_and_filtering.py"
-go-hierarchy-analysis = "python scripts/go_hierarchy_analysis.py"
 filter-jaccard = "python scripts/jaccard_similarity_and_filtering.py"
 gen-permutation = "python scripts/permutation_null_datasets.py"
 gen-random = "python scripts/random_null_datasets.py"
@@ -49,10 +49,6 @@ gen-random = "python scripts/random_null_datasets.py"
 # DWPC computation
 # Option A: Direct matrix computation (no Docker required)
 compute-dwpc-direct = "python scripts/compute_dwpc_direct.py"
-
-# Testing
-test-dwpc-accuracy = "python scripts/test_dwpc_accuracy.py"
-benchmark-dwpc = "python scripts/benchmark_dwpc_methods.py"
 
 # Grouped tasks
 pipeline-production = "python scripts/pipeline_production.py"
