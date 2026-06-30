@@ -1,0 +1,212 @@
+@import "tailwindcss";
+
+@theme {
+  --breakpoint-sm: 35rem;
+  --breakpoint-md: 50rem;
+  --breakpoint-lg: 65rem;
+
+  --font-sans: "Lato", sans-serif;
+  --font-mono: "Roboto Mono Variable", monospace;
+
+  --font-weight-regular: 400;
+  --font-weight-bold: 700;
+
+  --color-primary: #02b3e4;
+  --color-secondary: #e91e63;
+  --color-tertiary: #fa750f;
+  --color-quaternary: #c341d8;
+
+  --shadow-md: 0 0 2px #00000020, 0 2px 10px #00000020;
+  --shadow-thick: 0 0 5px #00000020, 0 2px 10px #00000020;
+  --shadow-overlay: 0 0 0 9999px #00000040;
+}
+
+@layer base {
+  html {
+    @apply font-regular font-sans leading-normal;
+    font-size: 105%;
+  }
+
+  body {
+    @apply flex min-h-dvh flex-col;
+  }
+
+  #root {
+    @apply contents;
+  }
+
+  main {
+    @apply flex grow flex-col;
+  }
+
+  section {
+    --width: 250;
+    @apply flex flex-col gap-8 bg-white px-[max(--spacing(12),(100%-(--spacing(1))*var(--width))/2)] py-12 last:grow even:bg-gray-50;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-regular flex items-center gap-[0.75em] text-gray-800 not-first:mt-8;
+  }
+
+  h1 {
+    @apply justify-center text-center text-3xl tracking-widest uppercase;
+  }
+
+  h2 {
+    @apply justify-center text-center text-2xl tracking-wider uppercase;
+  }
+
+  h3 {
+    @apply text-xl tracking-wide;
+  }
+
+  h4 {
+    @apply text-lg tracking-wide;
+  }
+
+  hr {
+    @apply my-12 block h-px shrink-0 border-none bg-gray-300;
+  }
+
+  a {
+    @apply transition-all;
+  }
+
+  strong,
+  b {
+    @apply font-bold;
+  }
+
+  p {
+    @apply leading-loose;
+  }
+
+  a {
+    @apply text-primary underline hover:text-current;
+  }
+
+  button {
+    @apply cursor-pointer leading-none transition-all;
+  }
+
+  label {
+    @apply flex items-center gap-2;
+  }
+
+  input {
+    @apply min-w-0;
+  }
+
+  textarea {
+    @apply min-w-0;
+  }
+
+  label:has(input[type="checkbox"]) {
+    @apply cursor-pointer;
+  }
+
+  input[type="checkbox"] {
+    @apply accent-primary cursor-pointer;
+  }
+
+  select {
+    @apply cursor-pointer;
+  }
+
+  ul,
+  ol {
+    @apply flex list-[revert] flex-col pl-6 leading-loose;
+  }
+
+  ol {
+    @apply list-decimal;
+
+    ol {
+      @apply list-[lower-alpha];
+
+      ol {
+        @apply list-[lower-roman];
+      }
+    }
+  }
+
+  li {
+    @apply pl-2;
+  }
+
+  dl {
+    @apply grid grid-cols-[repeat(var(--cols),auto)] gap-x-8 gap-y-4 [--cols:2];
+  }
+
+  dt {
+    @apply font-medium;
+  }
+
+  dd {
+    @apply wrap-anywhere;
+  }
+
+  dd:empty {
+    @apply before:content-['-'];
+  }
+
+  table {
+    @apply border-collapse;
+  }
+
+  th {
+    @apply text-left;
+  }
+
+  th,
+  td {
+    @apply p-2 not-last:border-r-2 not-last:border-gray-100;
+  }
+
+  thead tr {
+    @apply bg-gray-100;
+  }
+
+  tr {
+    @apply bg-white even:bg-gray-50;
+  }
+
+  code:not(:has(pre)) {
+    @apply rounded-md bg-gray-200 px-1 font-mono;
+  }
+
+  pre {
+    @apply overflow-x-auto rounded-md bg-gray-800 p-4 font-mono text-gray-300;
+  }
+
+  blockquote {
+    @apply rounded-r-md border-l-4 border-gray-300 bg-gray-100 p-4;
+  }
+
+  button {
+    @apply hover:bg-primary bg-gray-100 px-6 py-4 text-gray-800 transition hover:text-white;
+  }
+
+  input {
+    @apply bg-gray-100 p-4 leading-none;
+  }
+
+  textarea {
+    @apply trim bg-gray-100 p-4 leading-loose;
+  }
+
+  .lucide {
+    @apply h-[1.1em] w-[unset];
+  }
+
+  [aria-disabled="true"] {
+    @apply cursor-not-allowed opacity-50 grayscale;
+  }
+}
+
+@utility trim {
+  text-box: trim-both text;
+}
