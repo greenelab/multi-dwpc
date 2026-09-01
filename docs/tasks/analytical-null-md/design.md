@@ -33,19 +33,9 @@ set of arcsinh(DWPC_m(gene, t) / raw_mean)` — the transformed scale
 
 **The null, and why it is stratified.** The null must answer: is this gene
 set's connectivity to *this* target higher than a random gene set's would be?
-Everything turns on what "a random gene set" means. Genes differ by orders of
-magnitude in how many paths they carry — a well-studied hub reaches most of a
-metapath's targets, a sparsely annotated gene reaches none — so a draw from
-the whole gene universe (the current null) is mostly low-connectivity genes,
-and any set of well-connected genes beats it for connectivity alone, whatever
-the target. The z then measures how well-annotated the genes are, not whether
-they point at this target. The validation measured the size of that
-confounding: 85% of features cleared z >= 1.65 against a degree-blind null and
-14.7% against this one, and the removed passes were connectivity, not signal
-(`pass_rates.csv` in the validation evidence). Stratifying removes the
-confound by comparing each of the user's genes only against genes of similar
-generic connectivity, so the surviving z means: *these genes reach this
-particular target more than genes with the same overall reach do.*
+Therefore, what is "a random gene set".  Stratifying adjust for degree-confounding in the random set by comparing each of the user's genes only against genes of similar
+connectivity, so the z-score reports whether these genes reach a
+particular target more than genes with the same overall connectivity. 
 
 **How the strata are built.** Per metapath and target:
 
@@ -53,40 +43,26 @@ particular target more than genes with the same overall reach do.*
    of the metapath (`c_g = sum over t' != t of DWPC_m(g, t')` — the matrix
    row sum minus the tested column). This is the gene's generic reach,
    computed with the same damping as the statistic, and it deliberately
-   excludes the tested target so the key is a covariate, never the outcome.
-2. Genes with capacity exactly zero form one stratum. Zero capacity means no
-   paths into the metapath's target layer at all, so these genes score zero
-   for every target — they are exactly interchangeable, and for sparse
-   metapaths they are the majority.
-3. Genes with positive capacity are sorted by capacity and grouped into
+   excludes the tested target.
+2. Genes with capacity of zero form one stratum. Zero capacity means no
+   these genes score zero for every target.
+3. Genes with positive capacity are grouped into
    strata of at least 50 genes each, never splitting genes with equal
-   capacity across strata. Why bins at all: exact capacity matching is
-   impossible — a hub's capacity is unique, leaving it nothing to be compared
-   against. Why not fixed decile bins: with many tied keys, rank-based bins
-   split the ties by arbitrary array order, which is precisely the artifact
-   that made the first validation attempt vacuous. Fifty comparators per
-   stratum is enough to define a stratum mean and variance worth matching on.
+   capacity across strata. 
 4. A null gene set replaces each of the user's genes with a gene drawn from
    the same stratum, without replacement, the user's own genes excluded. The
    mean and standard deviation of `T` over *all* such draws are computed
-   exactly by `hetnetex_md.exact_resampling_moments` (the only symbol the
-   import policy admits) — no `b`, no seed, no sampling error.
-   `z = (T - mu) / sigma` and `p = Phi_bar(z)` are derived locally; the
-   library's own p-values are never surfaced (anti-conservative in the tail;
-   validation spec, tail-calibration finding). That this z is calibrated is
-   measured, not assumed: on the validation rows, stratum-matched random sets
+   exactly by `hetnetex_md.exact_resampling_moments` — no `b`, no seed, no sampling error.
+   `z = (T - mu) / sigma` and `p = Phi_bar(z)` are derived locally. This z is calibrated on the validation rows, stratum-matched random sets
    scored z standard-normal with an upper tail of exactly 0.0500
    (CI [0.0449, 0.0554]).
 5. Excluding the user's genes can leave a stratum with fewer candidates than
    it must supply; such a stratum merges into its lower-capacity neighbour,
    and every merge is reported on the result.
-6. The partition is a function of (metapath, target, graph) only. The user's
-   gene set enters through self-exclusion and the reported merges, nothing
-   else — so the null cannot be shaped by the set it is testing.
 
 **Degenerate cases.** A zero-variance null yields a NaN z and p on a kept row,
 matching the current `std == 0` behaviour. A metapath whose matrix cannot be
-resolved is skipped, as today.
+resolved is skipped, as 2026-09-01.
 
 ## Interface
 
@@ -117,13 +93,6 @@ shared axes. Figures land in `docs/tasks/analytical-null-md/figures/`, drawn
 by the verification run, and the reviewer meets them in `summary.ipynb` in
 this order.
 
-- **promote** — the validated modules enter production.
-  - *positive*: the promoted test suites pass unchanged apart from import
-    paths.
-  - *negative*: the import-policy module still refuses the excluded
-    HetNetEX-MD symbols (asserted by test, not by comment).
-  - *figures*: none — nothing is measured; the audit checks the file-for-file
-    provenance table below instead.
 - **adapt** — the query backend.
   - *positive*: on a stub hetmat with a planted enrichment (the gene set
     holds the target column's top scorers), the real adapter returns z above
@@ -171,12 +140,7 @@ this order.
 
 1. **Deterministic.** Identical queries return identical z; `b`/`seed` are
    inert.
-2. **The null got honest, so z shrinks.** Across the null's three generations
-   on the validation rows, the fraction of features clearing z >= 1.65 fell
-   85% -> 47% -> 14.7% (`pass_rates.csv` in the validation evidence). Ranking
-   is unaffected as a mechanism; anything thresholding on z selects fewer
-   metapaths, by design — the removed passes were degree confounding.
-3. **Faster.** Per-metapath null cost falls from `b` DWPC resamples to
+2. **Faster.** Per-metapath null cost falls from `b` DWPC resamples to
    sub-millisecond moments (validated at 213x / 2,160x per row against
    B = 1,000 / 10,000 Monte Carlo); the end-to-end query number is this
    task's verify figure.
@@ -200,9 +164,7 @@ and imported, no dead parameters.
 
 ## Expected result
 
-- The example query's analytical z correlates with the Monte-Carlo z but
-  sits generally lower, and the metapaths that drop furthest are those whose
-  MC z rode on high-capacity genes.
+- The example query's analytical z correlates with the Monte-Carlo z.
 - Seed-to-seed MC spread is visible at default `b`; the analytical value has
   none.
 - Query latency drops by an order of magnitude or more.
