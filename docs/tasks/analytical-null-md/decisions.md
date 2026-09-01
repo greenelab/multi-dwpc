@@ -46,3 +46,19 @@ system lands in PR 2; this task follows it early).
   via a scoped negation of the repository's blanket `docs/` gitignore. A
   design a PR reviewer cannot open is the invisible-artifact failure the
   validation task already hit once with its evidence directory.
+
+## plan.md
+
+- **2026-09-01** (implementation, task 2) — The adapter computes capacity by
+  applying the pure `leave_target_out_capacity` to the matrix it has already
+  loaded, not via `CapacityProvider` as the plan's Task 2 internals line
+  said. `CapacityProvider.capacity()` re-invokes the matrix load on every
+  call, so routing through it would satisfy the plan's own one-matrix-load
+  invariant only if HetMat's cache absorbed the second call — the invariant
+  wins over the internals wording, and the plan text is corrected in the
+  same change. A stub test pins one load per evaluation. `CapacityProvider`
+  remains in production for callers that want cross-call row-sum caching.
+- **2026-09-01** (implementation, task 2) — `n_active_strata`, undefined
+  beyond its name in the design's Interface list, is the number of post-merge
+  strata holding at least one of the queried genes (`count > 0` over the
+  returned counts). It feeds figures and reporting only, never computation.

@@ -60,7 +60,8 @@ nothing else from the library.
 `analytical_gene_set_z(hetmat, metapath, source_idx, target_pos, *, min_stratum_size=50) -> GeneSetZResult`
 with fields `real_mean, null_mean, null_std, z, p_value, n_active_strata,
 merges`. Internals per the design's "How the strata are built": transformed
-score column for the statistic, raw capacity via `CapacityProvider`,
+score column for the statistic, raw capacity via `leave_target_out_capacity`
+on the same loaded matrix (see decisions.md, 2026-09-01),
 partition via `hurdle_adaptive_bins` + `pools_from_bins` +
 `merge_deficient_strata`, moments via `analytical_null`.
 
