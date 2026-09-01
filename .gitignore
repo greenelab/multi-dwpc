@@ -58,3 +58,9 @@ src_2/
 # Connectivity search backend data
 connectivity-search-backend/data/postgres/
 .DS_Store
+
+# Task documentation for this branch (docs/ is otherwise ignored at line 55)
+!docs/
+docs/*
+!docs/tasks/
+!docs/tasks/**
