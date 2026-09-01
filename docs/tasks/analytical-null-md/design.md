@@ -7,18 +7,16 @@
 
 ## What this task establishes
 
-The web query's null becomes the validated one. Today `query_metapath_z` scores a
+The web query's null is updated and validated. The current `query_metapath_z` scores a
 user's gene set against `b` random same-size gene subsets drawn from the whole
-gene universe — stochastic, blind to degree, and the slow step of every query.
-This task replaces that draw with the exact resampling moments of the same null,
+gene universe — stochastic, blind to degree, and the slowest step of every query.
+This task replaces that monte carlo null with the exact resampling moments of the same null,
 stratified by leave-target-out capacity, so a query returns the same z every
-time, in milliseconds instead of seconds, against a null that a hub gene cannot
-inflate. This is PR 1 of two; the documentation system and the Tier 0 write-up
-are PR 2.
+time, in milliseconds instead of seconds.
 
 ## Data
 
-Nothing new is downloaded. The query path reads what the repository already
+No new data. The query path reads what the repository already
 serves: the per-metapath DWPC matrices under `data/dwpc_cache/`
 (`dwpc_<metapath>_d0.50.npz`, raw scale; `scripts/prewarm_dwpc_cache.py` is the
 warm-up path and a missing matrix is computed on demand, read-only), the
@@ -31,29 +29,60 @@ that varies.
 
 **The statistic.** For metapath m and target t, `T = mean over the mapped gene
 set of arcsinh(DWPC_m(gene, t) / raw_mean)` — the transformed scale
-`query_metapath_z` reports today (`get_dwpc_for_pairs(..., transform=True)`),
-and the scale the validation validated. The configuration-model line's switch
-to raw scale is not carried over (`decisions.md`, 2026-09-01).
+`query_metapath_z` reports today (`get_dwpc_for_pairs(..., transform=True)`).
 
-**The null.** Stratified SRSWOR over the S1 `capacity_hurdle_adaptive`
-partition, evaluated in closed form:
+**The null, and why it is stratified.** The null must answer: is this gene
+set's connectivity to *this* target higher than a random gene set's would be?
+Everything turns on what "a random gene set" means. Genes differ by orders of
+magnitude in how many paths they carry — a well-studied hub reaches most of a
+metapath's targets, a sparsely annotated gene reaches none — so a draw from
+the whole gene universe (the current null) is mostly low-connectivity genes,
+and any set of well-connected genes beats it for connectivity alone, whatever
+the target. The z then measures how well-annotated the genes are, not whether
+they point at this target. The validation measured the size of that
+confounding: 85% of features cleared z >= 1.65 against a degree-blind null and
+14.7% against this one, and the removed passes were connectivity, not signal
+(`pass_rates.csv` in the validation evidence). Stratifying removes the
+confound by comparing each of the user's genes only against genes of similar
+generic connectivity, so the surviving z means: *these genes reach this
+particular target more than genes with the same overall reach do.*
 
-- Key: `c_g = sum over targets t' != t of DWPC_m(g, t')` on the raw scale —
-  the leave-target-out row sum, so the key is the gene's generic reach along
-  the metapath and never the outcome.
-- Strata: all `c_g = 0` genes form the hurdle stratum (an exact
-  exchangeability class — a zero row scores zero for every target); positive
-  keys are grouped value-respecting and ascending, closing a stratum at
-  `min_stratum_size = 50`; a stratum whose candidate pool (after excluding
-  the user's genes) is smaller than its count merges into its lower-key
-  neighbour, and every merge is reported on the result.
-- Moments: `hetnetex_md.exact_resampling_moments`, the only symbol the import
-  policy admits; `z = (T - mu) / sigma` and `p = Phi_bar(z)` are derived
-  locally, and the library's own p-values are never surfaced (they are
-  anti-conservative in the tail; validation spec, tail-calibration finding).
-- The partition is a function of (metapath, target, graph) only. The user's
-  gene set enters through self-exclusion and the reported merges, nothing
-  else.
+**How the strata are built.** Per metapath and target:
+
+1. Each gene gets a **capacity**: its total raw DWPC to every *other* target
+   of the metapath (`c_g = sum over t' != t of DWPC_m(g, t')` — the matrix
+   row sum minus the tested column). This is the gene's generic reach,
+   computed with the same damping as the statistic, and it deliberately
+   excludes the tested target so the key is a covariate, never the outcome.
+2. Genes with capacity exactly zero form one stratum. Zero capacity means no
+   paths into the metapath's target layer at all, so these genes score zero
+   for every target — they are exactly interchangeable, and for sparse
+   metapaths they are the majority.
+3. Genes with positive capacity are sorted by capacity and grouped into
+   strata of at least 50 genes each, never splitting genes with equal
+   capacity across strata. Why bins at all: exact capacity matching is
+   impossible — a hub's capacity is unique, leaving it nothing to be compared
+   against. Why not fixed decile bins: with many tied keys, rank-based bins
+   split the ties by arbitrary array order, which is precisely the artifact
+   that made the first validation attempt vacuous. Fifty comparators per
+   stratum is enough to define a stratum mean and variance worth matching on.
+4. A null gene set replaces each of the user's genes with a gene drawn from
+   the same stratum, without replacement, the user's own genes excluded. The
+   mean and standard deviation of `T` over *all* such draws are computed
+   exactly by `hetnetex_md.exact_resampling_moments` (the only symbol the
+   import policy admits) — no `b`, no seed, no sampling error.
+   `z = (T - mu) / sigma` and `p = Phi_bar(z)` are derived locally; the
+   library's own p-values are never surfaced (anti-conservative in the tail;
+   validation spec, tail-calibration finding). That this z is calibrated is
+   measured, not assumed: on the validation rows, stratum-matched random sets
+   scored z standard-normal with an upper tail of exactly 0.0500
+   (CI [0.0449, 0.0554]).
+5. Excluding the user's genes can leave a stratum with fewer candidates than
+   it must supply; such a stratum merges into its lower-capacity neighbour,
+   and every merge is reported on the result.
+6. The partition is a function of (metapath, target, graph) only. The user's
+   gene set enters through self-exclusion and the reported merges, nothing
+   else — so the null cannot be shaped by the set it is testing.
 
 **Degenerate cases.** A zero-variance null yields a NaN z and p on a kept row,
 matching the current `std == 0` behaviour. A metapath whose matrix cannot be
@@ -181,8 +210,4 @@ and imported, no dead parameters.
 ## Out of scope
 
 The batch pipeline's Monte-Carlo nulls (`scripts/permutation_null_datasets.py`,
-`scripts/random_null_datasets.py`); the documentation system, Tier 0 write-up
-and evidence promotion (PR 2); porting the superseded branch's
-`benchmark_null_methods.py` (it measured the dropped configuration-model
-backend); any change to `query_intermediates_and_paths` beyond what the
-backend swap forces.
+`scripts/random_null_datasets.py`). 
