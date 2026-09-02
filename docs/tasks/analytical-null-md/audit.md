@@ -390,3 +390,39 @@ residual difference); none remains as silent drift.
   mu/sigma recovered within float tolerance" — the same imprecision F10
   flagged in design.md, but plan.md was not in F10's fix location and the fix
   map did not touch it. Not a new finding under this re-audit's charter.
+
+## Audit delta — B-sweep addition (6e33629), fresh reader
+
+Fresh reader with respect to this surface: wrote none of the B-sweep
+evidence, the design doc, or any prior audit pass. Read against
+`git diff ee71b84..6e33629` (7 files) and the committed tree at 6e33629.
+Constraint checked first: `design.md` does not appear in the commit's file
+list (`decisions.md`, two `figures/*.png`, two `tables/*.csv`,
+`verification.md`, `verify_query.py` — seven files, no `design.md`), so the
+declared-figure list at design.md "Figures, controls and the reviewer's
+path" (lines 99-124) is untouched and does not name `b_sweep_agreement.png`
+or `b_sweep_tradeoff.png` — the no-new-hypothesis constraint holds.
+
+| Artifact | Verdict | Evidence |
+|---|---|---|
+| `tables/b_sweep_per_metapath.csv` | aligned | 624 data rows (52 metapaths x 4 `B` x 3 seeds), columns `metapath,B,seed,z_mc,z_analytical,z_oldnull_b10k`. `z_analytical` is a map from the already-committed `per_metapath_comparison.csv` (`finalize_b_sweep`'s `z_analytical_by_mp`), not a second computation — the NaN pattern confirms it: 6 unique metapaths carry NaN `z_analytical` in the B-sweep table, exactly the "6/52" NaN count already recorded for `per_metapath_comparison.csv` in this audit's own summary table. Spot-recomputed Spearman rho directly from the raw rows at `B=10000, seed=42` (dropping NaNs, n=46): `0.9995065764076316`, which equals `b_sweep_summary.csv`'s `rho_seed42` for that row (`0.999507`) to displayed precision — the summary derives from this table, not independently. |
+| `tables/b_sweep_summary.csv` | aligned | 7 rows (4 `same_null_mc` + 1 `analytical` + 1 `old_null_b10k`, one header). All four claimed same-null rho_mean values reproduce: 0.975194/0.992154/0.997944/0.999548 round to the verification.md table's stated 0.9752/0.9922/0.9979/0.9995. Old-null b10k rho_seed42 = 0.282921, rounds to the stated 0.283/0.2829. Wall-time entries match verbatim: analytical total_wall_time_s = 0.0063935830112313 (6.4ms stated), same-null B=10000 = 173.080257 (173.08s stated), old_null_b10k = 222.279652 (222.28s stated). |
+| `figures/b_sweep_agreement.png` | aligned | Named against `b_sweep_summary.csv` by content, not just filename prefix: `finalize_b_sweep()` builds this figure directly from the in-memory `summary` DataFrame that is written to `b_sweep_summary.csv` in the same function call (`mc_summary`/`old_row` slices of `summary`), so table and figure are drawn from one shared object, not regenerated independently. File present, 97,304 bytes, matches the diff's stated size. |
+| `figures/b_sweep_tradeoff.png` | aligned | Same construction as above — built from the same `summary` DataFrame (`mc_summary`, `analytical_row`, `old_row`) in the same `finalize_b_sweep()` call that writes `b_sweep_summary.csv`. File present, 60,171 bytes, matches the diff's stated size. |
+| verification.md, "Agreement and cost versus B" section | aligned | All eight `b-sweep-*` commands present verbatim, both in this section and in "Reproducing" below it. Statistical method as described: same-null MC rebuilds the S1 partition via the public modules (`hurdle_adaptive_bins`, `pools_from_bins`, `merge_deficient_strata`) in the identical sequence `analytical_gene_set_z` uses internally (`src/analytical_null.py:88-137`, confirmed by direct comparison of the two code bodies), draws SRSWOR (argpartition-of-random-keys, without replacement) from `pools`/`counts` via `numpy.random.default_rng(seed)`, and computes `z_mc = (observed - mu) / sigma` from the empirical mean/std of `B` set-means (`T = totals / K`); `z_analytical` is read back from the committed table, never recomputed by a second method (`finalize_b_sweep` maps it in from `per_metapath_comparison.csv`; `run_analytical_reference_timing` calls `analytical_null` only for isolated wall-clock timing, its return value is discarded, not written into the per-metapath rows). Both stated caveats present, quoted: (a) "`old_null_b10k`'s row uses a single seed (42), so no seed-to-seed spread is reported for it (`n/a` in the table above) ... this matches what the task asked for ('one pass') but means the old-null point is not directly seed-range-comparable to the same-null curve"; (b) "The same-null MC wall-times and the analytical reference wall-time are measured on the identical basis (cached S1 partitions, no disk I/O, one full query across 52 metapaths) and are directly comparable; the old-null-b10k wall-time additionally includes matrix disk I/O ... so part of its 222s is not 'null generation' in the same narrow sense — it is still the correct number to report". No smoothing found: the section states the residual gap plainly (same-null MC at B=10,000 does not reach rho=1 exactly) and calls the old-null b=10,000 point "the single worst point on the whole plot" rather than softening it. |
+| decisions.md entry | recorded | Dated `2026-09-02` entry names all five new artifacts, states the addition was made "after the audit passed, at Lucas's direction," frames it as Gate-2 presentation evidence for something "the design already implies" rather than a new hypothesis, and states explicitly that it "is not added to `design.md`" and the design's declared-figure list "is not retroactively edited to include these two figures." This is the entry that makes the whole addition an intentional, recorded departure from the audited baseline rather than silent drift. |
+
+**Checksums (md5):**
+
+```
+f12211e54276b92494828d9bdb62bb23  tables/b_sweep_per_metapath.csv
+97a683e4f37c4e93539c496e32058d94  tables/b_sweep_summary.csv
+c5d1871981817f67e10f60cf88adbb73  figures/b_sweep_agreement.png
+4869d8fb4f0ff62bf1fd3c7df94ac200  figures/b_sweep_tradeoff.png
+```
+
+**Closing verdict: PASSES.** All six new-artifact rows are aligned except
+the decisions.md entry itself, which is recorded (by construction — it is
+the record) rather than aligned against some prior baseline; nothing in this
+delta is silent drift. design.md is untouched, confirmed from the commit's
+file list, so the no-new-hypothesis constraint holds.
