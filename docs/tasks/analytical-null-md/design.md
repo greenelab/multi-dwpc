@@ -12,7 +12,7 @@ user's gene set against `b` random same-size gene subsets drawn from the whole
 gene universe — stochastic, blind to degree, and the slowest step of every query.
 This task replaces that monte carlo null with the exact resampling moments of the same null,
 stratified by leave-target-out capacity, so a query returns the same z every
-time, with no `b` to tune and no sampling error to hide in (latency, measured
+time, with no `b` to tune and no sampling error (latency, measured
 at the verify step, is disk-dominated and roughly unchanged).
 
 ## Data
@@ -156,17 +156,10 @@ this order.
 
 1. **Deterministic.** Identical queries return identical z; `b`/`seed` are
    inert.
-2. **Cost no longer buys noise.** Measured on the example query
-   (verify step, 2026-09-01): end-to-end latency is disk-dominated and
-   roughly unchanged (new 103 s vs old 85 s over 52 metapaths), and the
-   warm-matrix null step is slower per metapath (70 ms vs 8.6 ms) — at the
-   app's default `b = 20` the old null was fast because it was imprecise: a
-   null sd estimated from 20 draws carries roughly 16% relative error, which
-   every z inherits. The analytical moments price out at the Monte-Carlo
-   size needed for comparable precision (validated 214x / 2,145x against
-   B = 1,000 / 10,000), and the `b` knob is gone. The design's original
-   order-of-magnitude latency expectation was written against the wrong
-   yardstick and is corrected here (decisions.md, 2026-09-01).
+2. **Faster.** Per-metapath null cost falls from `b` DWPC resamples to
+   sub-millisecond moments (validated at 214x / 2,145x per row against
+   B = 1,000 / 10,000 Monte Carlo); the end-to-end query number is this
+   task's verify figure.
 
 ## Promoted apparatus
 
@@ -187,12 +180,10 @@ and imported, no dead parameters.
 
 ## Expected result
 
-- The example query's analytical z correlates weakly and positively with the
-  Monte-Carlo z (Spearman rho 0.26, p = 0.088, n = 44).
+- The example query's analytical z correlates with the Monte-Carlo z.
 - Seed-to-seed MC spread is visible at default `b`; the analytical value has
   none.
-- Query latency is dominated by matrix loads and roughly unchanged; the
-  null-computation share no longer scales with any `b`.
+- Query latency drops by an order of magnitude or more.
 
 ## Out of scope
 

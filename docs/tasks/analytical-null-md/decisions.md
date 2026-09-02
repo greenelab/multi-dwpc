@@ -108,3 +108,23 @@ system lands in PR 2; this task follows it early).
   originally described belongs in this ledger; verification.md documents the
   fallback at length but, until this entry, no decisions.md entry recorded
   it.
+
+- **2026-09-02** — **REVERSAL of the 2026-09-01 measured-correction entries
+  above wherever they rewrote hypotheses, at Lucas's direction** ("The
+  design document changed the expected results to align with the actual
+  results. This is circular and not scientific. Replace with the previous
+  hypotheses."). Behaviour change 2 ("Faster") and the Expected-result
+  bullets are restored to their gate-1 approved wording; the only edit
+  retained inside the restored text is the citation correction
+  213x/2,160x -> 214x/2,145x (audit F12), which quotes the validation
+  branch's evidence and is not an outcome of this run. Standing rule from
+  this entry forward: sections stating pre-run expectations — Expected
+  result, hypothesis prose, promised behaviour changes — are never
+  rewritten to match measurements. Measured outcomes and their divergence
+  from the hypotheses are reported in verification.md and presented
+  hypothesis-against-result in summary.ipynb; a divergence is a finding,
+  not a document defect. The 2026-09-01 entries stay above as history of
+  the mistake. The same fix wave's mechanism corrections (grammar
+  restorations, merge-direction wording, cache-semantics truth, filename
+  pattern) are not reversed: they describe the machinery and were wrong
+  independent of any measurement.
