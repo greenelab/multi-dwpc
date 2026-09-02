@@ -125,6 +125,12 @@ Negative control (unknown gene IDs): ValueError: None of the provided gene IDs w
 A clean `ValueError`, not a crash — matches the existing behavior
 (`source_idx.size == 0` guard in `query_metapath_z`).
 
+Like the positive-control determinism check above, this ran via a direct
+`query_metapath_z` call rather than through the live UI, for the same
+`get_hetmat()` preload memory reason discussed under "Streamlit" below
+(driving it through the app would require clicking "Run query", which
+triggers the ~30+ GB matrix preload this machine cannot safely absorb).
+
 ## Streamlit: AppTest smoke + fallback determinism check (explicit record)
 
 `streamlit==1.56.0` is installed, and `streamlit.testing.v1.AppTest` is
@@ -245,8 +251,24 @@ under `BoundedHetMat`) and
 [`figures/timing_comparison.png`](figures/timing_comparison.png) (two
 panels, one per table).
 
-One warm-up run preceded each timed set, not itself timed. Medians below are
-of 3 runs (end-to-end) / 5 runs (warm-matrix).
+Warm-up is not symmetric between the two timing tables, and it's worth being
+precise about it. For the **end-to-end** table, `verify_query.py` issues one
+explicit warm-up call (`new_query_metapath_z(...)`, not itself timed)
+immediately before the analytical timed loop only; the Monte-Carlo timed
+loop that follows has no dedicated warm-up call directly before it — its
+cache warmth is incidental, inherited from the earlier seeds 42/43/44
+per-metapath comparison runs (same `hetmat`, same 52 metapaths, run just
+before the timing section). For the **warm-matrix** table, each of the two
+metapaths gets one explicit warm-up call for *each* implementation
+(`old_mod.query_metapath_z(...)` then `new_query_metapath_z(...)`) before
+its own 5-run timed loop, so that comparison is warm-up-symmetric. This
+asymmetry in the end-to-end table is immaterial to the qualitative finding
+below (analytical slower than MC at `b=20`): both loops there read from a
+`hetmat` that had already touched every one of the 52 metapaths at least
+once by the time either timed loop starts, and the disk-I/O-free
+warm-matrix table — which is symmetric — corroborates the same direction and
+a *larger* relative gap, not a smaller one. Medians below are of 3 runs
+(end-to-end) / 5 runs (warm-matrix).
 
 *Provenance note*: the warm-matrix block (both metapaths) was added to
 `verify_query.py` after the end-to-end run above had already completed and
