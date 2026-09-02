@@ -339,3 +339,54 @@ one-character tree change is warranted — consider `/data` (no trailing slash) 
   `test_dwpc_direct.py` and `test_dwpc_validation.py` at 106cb72, and neither
   appears in the branch diff — so plan.md Task 3's "any other existing-test edit
   is a finding" is satisfied vacuously and correctly.
+
+---
+
+## Re-audit — fresh reader, after the fix wave (044132e)
+
+**Pass** re-audit, fresh reader (wrote none of the original work, the first
+audit, or the fix wave). **Verified against** `git show 044132e` (6 files:
+`.gitignore`, `docs/tasks/analytical-null-md/{decisions,design,plan,verification}.md`,
+`src/multi_dwpc_query.py`) and the fix map at
+`.superpowers/sdd/plan/task-5-fixwave-report.md`. Each finding below was
+checked by reading the actual current document text at the cited location,
+not the diff alone.
+
+| Finding | Verdict | Evidence |
+|---|---|---|
+| F1 | fixed | design.md:22-25 now reads "`dwpc_<metapath>_d0.5.npz`, raw scale — the name the read path itself builds via `repr(float(damping))`", and separately notes the 406 legacy `_d0.50.npz` files "are not the read path's names." |
+| F2 | fixed | design.md:25-27: "a matrix missing from the cache is read through HetMat's existing cache semantics, which fall through to compute-and-write on a miss, unchanged by this task." plan.md:26-28 matches: "write a cache entry under `data/` on a miss; this task's runs wrote nothing because the cache was warm throughout." |
+| F3 | fixed | design.md:41-45 now parses: "Therefore the question is what counts as 'a random gene set'. Stratifying adjusts for degree confounding by comparing each of the user's genes only against genes of similar connectivity, …". |
+| F4 | fixed | design.md:54-56: "Zero capacity means no paths into the metapath's target layer, so these genes score zero for every target." Parses; matches `src/capacity.py`'s own statement in substance. |
+| F5 | fixed | design.md:75: "resolved is skipped, as before this change." No dangling date; grammatical. (Ruling differs from the audit's own suggested rewrite — drop the clause entirely — but resolves the defect the finding named.) |
+| F6 | fixed | design.md:57-60: "grouped into strata of at least 50 genes each where the gene count allows; when the positive-capacity genes number fewer than 50 they form a single stratum, …" — states the exception the tree implements. |
+| F7 | fixed | design.md:68-71: "a deficient stratum merges into its lower-capacity neighbour, and the lowest positive stratum merges upward." `src/multi_dwpc_query.py:104-105` docstring: "…lower-capacity neighbour, and the lowest stratum merged upward)". Diff of that file is one hunk inside the function's docstring only (5 lines changed, all prose); `python -m pytest tests -q` still reports 65 passed, 4 subtests passed — behavior unchanged. |
+| F8 | fixed | design.md:86-91: "`query_metapath_z` keeps its parameters. … their defaults change to `None` so that passing them can be told apart from not passing them, which is what gates the warning; …". |
+| F9 | fixed | design.md:75-77: "When every metapath is skipped, the existing `ValueError` ('No metapaths could be scored with the analytical null') contract is preserved." |
+| F10 | fixed | design.md:110-116: "the adapter's moments match a direct kernel invocation on the same pools (a wiring check) — the independent enumeration check of the kernel itself lives in the promoted wrapper's tests (`tests/test_hetnetex_md_import.py`)." Splits the control as the finding asked. |
+| F11 | recorded | decisions.md:97-110, new `## verification.md` heading, dated 2026-09-01: records both verify controls ran via direct `query_metapath_z` calls (not the live UI) because `app.py`'s `get_hetmat()` preload exceeds this machine's memory, and that verification.md documented the fallback but the ledger previously did not. The residual departure (controls not run through the live app) still stands — this is the recorded case, not a tree change. |
+| F12 | fixed | All three sites corrected: design.md:166 "validated 214x / 2,145x against B = 1,000 / 10,000"; decisions.md:76 "The validated 214x / 2,145x speedup is real"; verification.md:322 "**214x / 2,145x per-row**". No remaining `213x`/`2,160x`/`2160x` in these three files. |
+| F13 | fixed | design.md:190-191: "correlates weakly and positively with the Monte-Carlo z (Spearman rho 0.26, p = 0.088, n = 44)." decisions.md:87-95 adds the dated entry explaining the pre-run bullet expected stronger agreement than measured. |
+| F14 | fixed | plan.md:118-120: "latency is disk-dominated and roughly unchanged" replaces "latency drops by an order of magnitude or more" — aligned with the corrected design rather than annotated as superseded (a different remediation than the finding's suggested fix, but the document and tree now agree, which is what "fixed" requires). |
+| F15 | fixed | plan.md:35-38: "`src/pool_assembly.py` has no dedicated test file; its behaviour is covered indirectly, through the adapter (`tests/test_analytical_gene_set_z.py`) and binning (`tests/test_hurdle_adaptive_bins.py`) tests". |
+| F16 | fixed | verification.md:229-231: "spanning roughly 5-20 z units (min-max: 19.34, 15.88, 4.75 respectively)" — matches the recomputed per-metapath figures from `tables/per_metapath_comparison.csv`. |
+| F17 | fixed | plan.md:58-60: "the pin is verified via the installed package's `direct_url.json` (`pip show hetnetex-md` reports only the package version, not the commit)". |
+| F18 | fixed | `.gitignore:50-53` adds a bare `data` line beside the existing `/data/`; `git check-ignore -v data` now reports `.gitignore:53:data\tdata` (exit 0), and `git status --short` is clean (no `?? data`). verification.md:30-35 rewrites the false "gitignored" claim into an accurate account of the gap and its closure. |
+
+**Test suite:** `conda activate multi_dwpc && python -m pytest tests -q` →
+65 passed, 4 subtests passed — unchanged from the fix map's own report, and
+consistent with the tree-touching fixes (F7, F18) being non-behavioral.
+`git status --short` on the worktree is clean before this audit's own commit.
+
+**Tally:** 17 fixed, 1 recorded (F11), 0 still drift.
+
+**Closing verdict: PASSES.** Every finding F1-F18 is either fixed (document
+and tree now agree) or recorded (a dated `decisions.md` entry covers the
+residual difference); none remains as silent drift.
+
+### Notes (out of scope for this re-audit)
+
+- plan.md Task 2's "Expected test outcomes" (line ~80) still says "planted
+  mu/sigma recovered within float tolerance" — the same imprecision F10
+  flagged in design.md, but plan.md was not in F10's fix location and the fix
+  map did not touch it. Not a new finding under this re-audit's charter.
