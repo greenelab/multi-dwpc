@@ -12,7 +12,8 @@ user's gene set against `b` random same-size gene subsets drawn from the whole
 gene universe — stochastic, blind to degree, and the slowest step of every query.
 This task replaces that monte carlo null with the exact resampling moments of the same null,
 stratified by leave-target-out capacity, so a query returns the same z every
-time, in milliseconds instead of seconds.
+time, with no `b` to tune and no sampling error to hide in (latency, measured
+at the verify step, is disk-dominated and roughly unchanged).
 
 ## Data
 
