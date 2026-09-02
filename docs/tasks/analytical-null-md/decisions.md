@@ -62,3 +62,25 @@ system lands in PR 2; this task follows it early).
   beyond its name in the design's Interface list, is the number of post-merge
   strata holding at least one of the queried genes (`count > 0` over the
   returned counts). It feeds figures and reporting only, never computation.
+
+## design.md (measured corrections)
+
+- **2026-09-01** (implementation, task 4, measured) — **The latency
+  expectation was wrong, and the design is corrected rather than the
+  measurement massaged.** On the example query the analytical path is not
+  an order of magnitude faster: end-to-end 103 s new vs 85 s old over 52
+  metapaths (disk-dominated on both sides), and 70 ms vs 8.6 ms per
+  warm-matrix metapath. Root cause, correctly predicted by the task-2
+  decision above: the adapter recomputes the capacity row-sum per call, and
+  at `b = 20` the Monte-Carlo competitor did almost no work — 20 draws of
+  ~30 pair lookups. The validated 213x / 2,160x speedup is real but scoped
+  to the Monte-Carlo size a comparable-precision null needs (B >= 1,000);
+  b = 20 bought its speed with ~16% relative error on the null sd. No
+  optimization wave: the null-computation share is ~3.6 s of a 103 s
+  query, so per-metapath capacity caching is recorded as a follow-up for
+  the app's session-scoped HetMat, not done here. The design's behaviour
+  change 2 and Expected result are rewritten accordingly; the summary
+  presents the measured numbers, not the superseded expectation.
+- **2026-09-01** (implementation, task 4) — plan.md said "three declared
+  figures" where the approved design declares four; the plan text is
+  corrected. The implementer followed the design and produced all four.

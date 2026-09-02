@@ -103,7 +103,7 @@ column-set updates (any other existing-test edit is a finding, not a fix).
   module by the comparison script) — never a maintained second copy.
 - Timing table: wall-clock for the same query, old at default `b` against
   new, medians over 3 runs each.
-- The three declared figures (design: adapt and verify steps), each drawn
+- The four declared figures (design: adapt and verify steps), each drawn
   from its committed table.
 - Streamlit: app launched in the env, example query executed; run twice —
   byte-identical results; a gene set of unknown IDs produces the existing

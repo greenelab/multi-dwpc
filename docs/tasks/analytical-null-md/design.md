@@ -140,10 +140,17 @@ this order.
 
 1. **Deterministic.** Identical queries return identical z; `b`/`seed` are
    inert.
-2. **Faster.** Per-metapath null cost falls from `b` DWPC resamples to
-   sub-millisecond moments (validated at 213x / 2,160x per row against
-   B = 1,000 / 10,000 Monte Carlo); the end-to-end query number is this
-   task's verify figure.
+2. **Cost no longer buys noise.** Measured on the example query
+   (verify step, 2026-09-01): end-to-end latency is disk-dominated and
+   roughly unchanged (new 103 s vs old 85 s over 52 metapaths), and the
+   warm-matrix null step is slower per metapath (70 ms vs 8.6 ms) — at the
+   app's default `b = 20` the old null was fast because it was imprecise: a
+   null sd estimated from 20 draws carries roughly 16% relative error, which
+   every z inherits. The analytical moments price out at the Monte-Carlo
+   size needed for comparable precision (validated 213x / 2,160x against
+   B = 1,000 / 10,000), and the `b` knob is gone. The design's original
+   order-of-magnitude latency expectation was written against the wrong
+   yardstick and is corrected here (decisions.md, 2026-09-01).
 
 ## Promoted apparatus
 
@@ -167,7 +174,8 @@ and imported, no dead parameters.
 - The example query's analytical z correlates with the Monte-Carlo z.
 - Seed-to-seed MC spread is visible at default `b`; the analytical value has
   none.
-- Query latency drops by an order of magnitude or more.
+- Query latency is dominated by matrix loads and roughly unchanged; the
+  null-computation share no longer scales with any `b`.
 
 ## Out of scope
 
