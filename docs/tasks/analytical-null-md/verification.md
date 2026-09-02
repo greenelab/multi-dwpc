@@ -27,9 +27,12 @@ worktree has no `data/` of its own (it's gitignored); a symlink
 `data -> /Users/gillenlu/Repositories/multi-dwpc/data` was created so the
 worktree reaches the same read-only DWPC cache the main checkout uses (same
 pattern already used by the sibling `fix-random-null-stratified-srswor`
-worktree). The symlink is intentionally **not** committed — `data/` is
-gitignored and this is local machine setup, not part of the task's
-deliverables.
+worktree). The symlink is intentionally **not** committed. At the time of
+this run `.gitignore`'s `/data/` entry matched only a directory, not the
+symlink (`git check-ignore -v data` exited 1, `git status --short` showed
+`?? data`), so it was untracked local machine setup rather than actually
+ignored; the audit fix wave that followed added a bare `data` line to
+`.gitignore` to close that gap.
 
 ## Memory-bounded HetMat (methodology note, read this first)
 
@@ -223,8 +226,9 @@ z_mc_mean, z_mc_std, z_mc_min, z_mc_max`).
   per-metapath MC seed range (min-max across seeds 42/43/44, horizontal
   bars) against the single deterministic analytical z (dot) — the
   determinism claim made visible. Several metapaths (`GpPWpGpBP`,
-  `GpBPpGpBP`, `GpMFpGpBP`) show MC seed ranges spanning 10-30+ z units at
-  `b = 20`; the analytical value has none by construction.
+  `GpBPpGpBP`, `GpMFpGpBP`) show MC seed ranges spanning roughly 5-20 z units
+  (min-max: 19.34, 15.88, 4.75 respectively) at `b = 20`; the analytical
+  value has none by construction.
 
 NaN rows: **6 of 52** analytical z values are NaN
 (`GbCuGpBP, GdCbGpBP, GdCuGpBP, GpBP, GuCbGpBP, GuCuGpBP`) — all 6 are
@@ -315,7 +319,7 @@ with metapath size:
   `CapacityProvider`'s cross-call row-sum cache). The old MC null's cost is
   `O(b * n_genes)` sparse lookups against an already-loaded matrix —
   independent of matrix size and, at `b = 20`, cheap.
-- The design doc's validated **213x / 2160x per-row** speedup
+- The design doc's validated **214x / 2,145x per-row** speedup
   (`docs/tasks/analytical-null-md/design.md`, "Behaviour changes") was
   measured against `B = 1,000` / `B = 10,000` Monte Carlo draws, where MC's
   cost scales linearly with `B` and eventually dominates the analytical

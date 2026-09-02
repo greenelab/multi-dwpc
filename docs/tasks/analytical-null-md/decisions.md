@@ -73,7 +73,7 @@ system lands in PR 2; this task follows it early).
   warm-matrix metapath. Root cause, correctly predicted by the task-2
   decision above: the adapter recomputes the capacity row-sum per call, and
   at `b = 20` the Monte-Carlo competitor did almost no work — 20 draws of
-  ~30 pair lookups. The validated 213x / 2,160x speedup is real but scoped
+  ~30 pair lookups. The validated 214x / 2,145x speedup is real but scoped
   to the Monte-Carlo size a comparable-precision null needs (B >= 1,000);
   b = 20 bought its speed with ~16% relative error on the null sd. No
   optimization wave: the null-computation share is ~3.6 s of a 103 s
@@ -84,3 +84,27 @@ system lands in PR 2; this task follows it early).
 - **2026-09-01** (implementation, task 4) — plan.md said "three declared
   figures" where the approved design declares four; the plan text is
   corrected. The implementer followed the design and produced all four.
+- **2026-09-01** (implementation, task 4, measured) — design.md's Expected
+  result bullet on rank agreement ("the example query's analytical z
+  correlates with the Monte-Carlo z") was written before the run and expected
+  stronger agreement than measured. The verify step's committed
+  `tables/rank_agreement.csv` gives Spearman rho = 0.26 (p = 0.088, n = 44):
+  weak and not significant at alpha = 0.05, with the top-ranked metapaths
+  agreeing and the middle of the ranking reordering substantially. The bullet
+  is rewritten to the measured shape rather than left implying stronger
+  agreement than what was found.
+
+## verification.md
+
+- **2026-09-01** (implementation, task 4) — Both the verify step's positive
+  control (run-twice determinism) and negative control (unknown gene IDs)
+  were exercised via direct `query_metapath_z` calls rather than by driving
+  the running Streamlit app through those flows. Reason: `app.py`'s
+  `get_hetmat()` preloads all 52 `G -> BP` DWPC matrices (~30+ GB
+  decompressed) on the first "Run query" click, which exceeds this
+  machine's available memory (an unbounded first attempt was SIGKILLed).
+  `query_metapath_z` is the identical code path the app calls, so the
+  controls' evidence stands, but the departure from "in the running app" as
+  originally described belongs in this ledger; verification.md documents the
+  fallback at length but, until this entry, no decisions.md entry recorded
+  it.

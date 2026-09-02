@@ -19,9 +19,13 @@ at the verify step, is disk-dominated and roughly unchanged).
 
 No new data. The query path reads what the repository already
 serves: the per-metapath DWPC matrices under `data/dwpc_cache/`
-(`dwpc_<metapath>_d0.50.npz`, raw scale; `scripts/prewarm_dwpc_cache.py` is the
-warm-up path and a missing matrix is computed on demand, read-only), the
-per-metapath `raw_mean` from `data/metapath-dwpc-stats.tsv`, and the node
+(`dwpc_<metapath>_d0.5.npz`, raw scale — the name the read path itself builds
+via `repr(float(damping))`; `data/dwpc_cache/` also holds 406 legacy
+`_d0.50.npz` files predating the naming change, which are not the read path's
+names; `scripts/prewarm_dwpc_cache.py` is the warm-up path, and a matrix
+missing from the cache is read through HetMat's existing cache semantics,
+which fall through to compute-and-write on a miss, unchanged by this task),
+the per-metapath `raw_mean` from `data/metapath-dwpc-stats.tsv`, and the node
 tables that map the user's Entrez IDs and the target identifier to matrix
 positions. The user's gene set arrives at query time and is the only input
 that varies.
@@ -34,9 +38,11 @@ set of arcsinh(DWPC_m(gene, t) / raw_mean)` — the transformed scale
 
 **The null, and why it is stratified.** The null must answer: is this gene
 set's connectivity to *this* target higher than a random gene set's would be?
-Therefore, what is "a random gene set".  Stratifying adjust for degree-confounding in the random set by comparing each of the user's genes only against genes of similar
-connectivity, so the z-score reports whether these genes reach a
-particular target more than genes with the same overall connectivity. 
+Therefore the question is what counts as "a random gene set". Stratifying
+adjusts for degree confounding by comparing each of the user's genes only
+against genes of similar connectivity, so the z-score reports whether these
+genes reach a particular target more than genes with the same overall
+connectivity.
 
 **How the strata are built.** Per metapath and target:
 
@@ -46,10 +52,12 @@ particular target more than genes with the same overall connectivity.
    computed with the same damping as the statistic, and it deliberately
    excludes the tested target.
 2. Genes with capacity of zero form one stratum. Zero capacity means no
-   these genes score zero for every target.
-3. Genes with positive capacity are grouped into
-   strata of at least 50 genes each, never splitting genes with equal
-   capacity across strata. 
+   paths into the metapath's target layer, so these genes score zero for
+   every target.
+3. Genes with positive capacity are grouped into strata of at least 50 genes
+   each where the gene count allows; when the positive-capacity genes number
+   fewer than 50 they form a single stratum, never splitting genes with
+   equal capacity across strata.
 4. A null gene set replaces each of the user's genes with a gene drawn from
    the same stratum, without replacement, the user's own genes excluded. The
    mean and standard deviation of `T` over *all* such draws are computed
@@ -58,12 +66,15 @@ particular target more than genes with the same overall connectivity.
    scored z standard-normal with an upper tail of exactly 0.0500
    (CI [0.0449, 0.0554]).
 5. Excluding the user's genes can leave a stratum with fewer candidates than
-   it must supply; such a stratum merges into its lower-capacity neighbour,
-   and every merge is reported on the result.
+   it must supply; a deficient stratum merges into its lower-capacity
+   neighbour, and the lowest positive stratum merges upward; every merge is
+   reported on the result.
 
 **Degenerate cases.** A zero-variance null yields a NaN z and p on a kept row,
 matching the current `std == 0` behaviour. A metapath whose matrix cannot be
-resolved is skipped, as 2026-09-01.
+resolved is skipped, as before this change. When every metapath is skipped,
+the existing `ValueError` ("No metapaths could be scored with the analytical
+null") contract is preserved.
 
 ## Interface
 
@@ -72,10 +83,12 @@ resolved is skipped, as 2026-09-01.
   min_stratum_size=50)` returning `real_mean, null_mean, null_std, z, p_value,
   n_active_strata, merges` — the shape the superseded configuration-model line
   proved out, backed now by the validated machinery.
-- `query_metapath_z` keeps its signature. `b` and `seed` are accepted,
-  ignored, and warn (DeprecationWarning); the output gains `p_value`;
-  `real_mean_score` and `null_mean_score` stay on the transformed scale;
-  rows are still ranked by `effect_size_z`.
+- `query_metapath_z` keeps its parameters. `b` and `seed` are accepted,
+  ignored, and warn (DeprecationWarning); their defaults change to `None` so
+  that passing them can be told apart from not passing them, which is what
+  gates the warning; the output gains `p_value`; `real_mean_score` and
+  `null_mean_score` stay on the transformed scale; rows are still ranked by
+  `effect_size_z`.
 - `app.py` stops plumbing `b`/`seed` into the query and names the analytical
   null in its progress text. No other UI change.
 - `pyproject.toml` pins the dependency:
@@ -97,8 +110,10 @@ this order.
 - **adapt** — the query backend.
   - *positive*: on a stub hetmat with a planted enrichment (the gene set
     holds the target column's top scorers), the real adapter returns z above
-    the 1.65 convention; a pool planted with a known mu and sigma is
-    recovered by the moments within float tolerance.
+    the 1.65 convention; the adapter's moments match a direct kernel
+    invocation on the same pools (a wiring check) — the independent
+    enumeration check of the kernel itself lives in the promoted wrapper's
+    tests (`tests/test_hetnetex_md_import.py`).
   - *negative*: a stratum-matched draw from the null scores near zero, and
     over many draws the z distribution is standard-normal shaped (the
     validation's calibration result, re-checked in miniature on the stub);
@@ -148,7 +163,7 @@ this order.
    app's default `b = 20` the old null was fast because it was imprecise: a
    null sd estimated from 20 draws carries roughly 16% relative error, which
    every z inherits. The analytical moments price out at the Monte-Carlo
-   size needed for comparable precision (validated 213x / 2,160x against
+   size needed for comparable precision (validated 214x / 2,145x against
    B = 1,000 / 10,000), and the `b` knob is gone. The design's original
    order-of-magnitude latency expectation was written against the wrong
    yardstick and is corrected here (decisions.md, 2026-09-01).
@@ -172,7 +187,8 @@ and imported, no dead parameters.
 
 ## Expected result
 
-- The example query's analytical z correlates with the Monte-Carlo z.
+- The example query's analytical z correlates weakly and positively with the
+  Monte-Carlo z (Spearman rho 0.26, p = 0.088, n = 44).
 - Seed-to-seed MC spread is visible at default `b`; the analytical value has
   none.
 - Query latency is dominated by matrix loads and roughly unchanged; the

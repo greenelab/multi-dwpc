@@ -23,15 +23,19 @@ only.
   target, graph); the queried gene set enters via self-exclusion and reported
   merges only.
 - The query statistic stays on the transformed scale; capacity stays raw.
-- No file under `data/` is written; DWPC matrices are read with the existing
-  read-only cache semantics.
+- DWPC matrices are read through HetMat's existing cache semantics, which
+  write a cache entry under `data/` on a miss; this task's runs wrote nothing
+  because the cache was warm throughout.
 - Full test suite green before every push.
 
 ## Task 1 — promote
 
 **Brings in.** `src/hurdle_adaptive_bins.py`, `src/pool_assembly.py`,
 `src/capacity.py`, `src/hetnetex_md_import.py`, `src/analytical_null.py`
-(wrapper only at this stage) and their test files under `tests/`, from the
+(wrapper only at this stage) and the test files that exist for them under
+`tests/` — `src/pool_assembly.py` has no dedicated test file; its behaviour
+is covered indirectly, through the adapter (`tests/test_analytical_gene_set_z.py`)
+and binning (`tests/test_hurdle_adaptive_bins.py`) tests — from the
 validation branch via `git show <branch>:<path>`; the `pyproject.toml`
 dependency pin from the design's Interface section; the pin installed into
 the local env.
@@ -51,8 +55,10 @@ constant is defined once — the promoted modules import the default from
 test asserts the import-policy module exposes `exact_resampling_moments` and
 nothing else from the library.
 
-**Expected outcome.** Promoted suites pass with only import-path edits;
-`pip show hetnetex-md` reports the pinned commit's version; full suite green.
+**Expected outcome.** Promoted suites pass with only import-path edits; the
+pin is verified via the installed package's `direct_url.json` (`pip show
+hetnetex-md` reports only the package version, not the commit); full suite
+green.
 
 ## Task 2 — adapt
 
@@ -110,8 +116,8 @@ column-set updates (any other existing-test edit is a finding, not a fix).
   clear error.
 
 **Expected outcome.** Determinism holds; analytical z generally at or below
-MC z; latency drops by an order of magnitude or more; rank agreement reported
-as measured, whatever it is.
+MC z; latency is disk-dominated and roughly unchanged; rank agreement
+reported as measured, whatever it is.
 
 ## Task 5 — audit
 

@@ -102,8 +102,9 @@ def query_metapath_z(
     (:func:`src.analytical_null.analytical_gene_set_z`). For each metapath,
     genes are partitioned into strata by leave-target-out capacity (adaptive
     bins, ``min_stratum_size=50``, deficient strata merged into their
-    lower-capacity neighbour); the null's mean and standard deviation are the
-    exact resampling moments of the transformed DWPC score
+    lower-capacity neighbour, and the lowest stratum merged upward); the
+    null's mean and standard deviation are the exact resampling moments of
+    the transformed DWPC score
     (``arcsinh(raw / raw_mean)``) over all same-stratum draws that exclude the
     user's own genes -- no Monte-Carlo sampling, so the same query returns the
     same z every time. ``real_mean_score``/``null_mean_score`` stay on that
