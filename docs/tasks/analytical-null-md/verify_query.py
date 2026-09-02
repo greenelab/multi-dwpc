@@ -24,6 +24,7 @@ from __future__ import annotations
 import functools
 import gc
 import importlib.util
+import pickle
 import subprocess
 import sys
 import time
@@ -49,6 +50,16 @@ FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(REPO_ROOT))
 
 DATA_DIR = REPO_ROOT / "data"
+
+# ---------------------------------------------------------------------------
+# B-sweep (Gate-2 presentation evidence, added 2026-09-02 at Lucas's request
+# -- see decisions.md's "## verification.md" entry). Transient working
+# files, cleaned up by finalize_b_sweep(); not committed.
+# ---------------------------------------------------------------------------
+B_SWEEP_ARTIFACTS_PATH = TASK_DIR / "_b_sweep_artifacts.pkl"
+B_SWEEP_PARTIAL_DIR = TASK_DIR / "_b_sweep_partials"
+B_SWEEP_SEEDS = [42, 43, 44]
+B_SWEEP_VALUES = [20, 100, 1000, 10000]
 
 # ---------------------------------------------------------------------------
 # Memory note (see verification.md, "Memory-bounded HetMat" section):
@@ -479,5 +490,406 @@ def main() -> None:
     print(f"negative_control = {neg_control_result}")
 
 
+def _draw_stratum_sums(rng, pool_scores: np.ndarray, k: int, B: int,
+                        max_chunk_bytes: int = 150_000_000) -> np.ndarray:
+    """B independent SRSWOR(k, pool) draws' per-draw score sums, vectorized
+    over B in memory-bounded chunks (a large stratum's pool can hold
+    thousands of genes; a full (B, n) random-key matrix at B=10,000 would
+    risk this machine's tight RAM headroom -- see verify_query.py's memory
+    note). Chunk size is capped so one chunk's key matrix stays under
+    ``max_chunk_bytes``; the draw itself is the standard "argpartition of
+    per-element random keys" trick, exact SRSWOR, no approximation.
+    """
+    n = len(pool_scores)
+    if k == 0:
+        return np.zeros(B)
+    if k == n:
+        # Every draw takes the whole pool: deterministic, no need to
+        # generate random keys.
+        return np.full(B, pool_scores.sum())
+    chunk_B = max(1, min(B, max_chunk_bytes // max(n * 8, 1)))
+    out = np.empty(B)
+    start = 0
+    while start < B:
+        cb = min(chunk_B, B - start)
+        keys = rng.random((cb, n))
+        idx = np.argpartition(keys, k - 1, axis=1)[:, :k]
+        out[start:start + cb] = pool_scores[idx].sum(axis=1)
+        start += cb
+    return out
+
+
+def build_b_sweep_artifacts() -> None:
+    """Stage 1 of the B-sweep: rebuild the S1 partition -- transformed
+    scores, raw leave-target-out capacity, hurdle_adaptive_bins,
+    pools_from_bins(source rows), merge_deficient_strata -- for every
+    metapath in the committed per-metapath table, using only the public S1
+    modules (matches analytical_gene_set_z's own body; z_analytical itself
+    is read back from the committed table at finalize time, never
+    recomputed a second way).
+
+    Caches the small per-metapath products (scores/pools/counts/observed --
+    kilobytes, not the multi-GB sparse matrices) to disk, so every later
+    B-sweep stage (run once per B, each its own foreground invocation) can
+    run without ever touching HetMat's disk-backed cache again.
+    """
+    from src.dwpc_direct import HetMat, DEFAULT_DAMPING, get_dwpc_raw_mean, transform_dwpc
+    from src.capacity import leave_target_out_capacity
+    from src.hurdle_adaptive_bins import hurdle_adaptive_bins, merge_deficient_strata
+    from src.pool_assembly import pools_from_bins
+    from src.multi_dwpc_query import _gene_index_map, _target_position
+
+    BoundedHetMat = make_bounded_hetmat_cls(HetMat)
+    hetmat = BoundedHetMat(data_dir=DATA_DIR)
+    gene_ids = parse_gene_input(EXAMPLE_GENES_RAW, hetmat)
+    gmap = _gene_index_map(hetmat)
+    source_idx = np.array([gmap[g] for g in gene_ids if g in gmap], dtype=np.int64)
+    target_pos = _target_position(hetmat, "BP", EXAMPLE_BP_ID)
+
+    comparison = pd.read_csv(TABLES_DIR / "per_metapath_comparison.csv")
+    metapaths = comparison["metapath"].tolist()
+
+    artifacts = {}
+    t0 = time.perf_counter()
+    for mp in metapaths:
+        matrix = hetmat.compute_dwpc_matrix_csc(mp, damping=DEFAULT_DAMPING)
+        raw_target_col = np.asarray(matrix[:, target_pos].todense()).ravel()
+        raw_mean = get_dwpc_raw_mean(hetmat.metapath_stats, mp)
+        scores = transform_dwpc(raw_target_col, raw_mean)
+        capacity = leave_target_out_capacity(matrix, target_pos)
+        bins = hurdle_adaptive_bins(capacity, min_stratum_size=50)
+        n_bins = int(bins.max()) + 1
+        pools, counts = pools_from_bins(bins, source_idx, n_bins)
+        pools, counts, merges = merge_deficient_strata(pools, counts)
+        observed = float(scores[source_idx].mean())
+        artifacts[mp] = {
+            "scores": scores, "pools": pools, "counts": counts,
+            "observed": observed, "K_total": int(sum(counts)), "merges": merges,
+        }
+        print(f"  built S1 partition: {mp} (K={sum(counts)}, n_strata={len(pools)})", flush=True)
+    build_elapsed = time.perf_counter() - t0
+    print(f"Stage 1 (build S1 partitions, {len(metapaths)} metapaths): {build_elapsed:.2f}s")
+
+    B_SWEEP_PARTIAL_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "gene_ids": gene_ids, "source_idx": source_idx, "target_pos": target_pos,
+        "metapaths": metapaths, "artifacts": artifacts, "build_elapsed_s": build_elapsed,
+    }
+    with open(B_SWEEP_ARTIFACTS_PATH, "wb") as f:
+        pickle.dump(payload, f)
+    print(f"Wrote {B_SWEEP_ARTIFACTS_PATH}")
+
+
+def run_b_sweep_for_B(B: int) -> None:
+    """Stage 2 (run once per B, foreground): SAME-NULL Monte Carlo at this
+    B, for each of the 3 seeds, over every metapath's cached S1 partition
+    (no HetMat, no disk I/O -- pure null-computation timing). Writes a
+    partial CSV pair so an interrupted sweep survives (each B stands alone).
+    """
+    if not B_SWEEP_ARTIFACTS_PATH.exists():
+        raise SystemExit(
+            f"{B_SWEEP_ARTIFACTS_PATH} not found -- run 'b-sweep-build' first."
+        )
+    with open(B_SWEEP_ARTIFACTS_PATH, "rb") as f:
+        payload = pickle.load(f)
+    metapaths = payload["metapaths"]
+    artifacts = payload["artifacts"]
+
+    rows = []
+    timing_rows = []
+    for seed in B_SWEEP_SEEDS:
+        rng = np.random.default_rng(seed)
+        t0 = time.perf_counter()
+        for mp in metapaths:
+            a = artifacts[mp]
+            scores, pools, counts = a["scores"], a["pools"], a["counts"]
+            observed, K = a["observed"], a["K_total"]
+            if K <= 0:
+                z_mc = float("nan")
+            else:
+                totals = np.zeros(B, dtype=np.float64)
+                for pool, k in zip(pools, counts):
+                    if k == 0:
+                        continue
+                    totals += _draw_stratum_sums(rng, scores[pool], k, B)
+                T = totals / K
+                mu = float(T.mean())
+                sigma = float(T.std(ddof=1))
+                z_mc = (observed - mu) / sigma if sigma > 0 else float("nan")
+            rows.append({"metapath": mp, "B": B, "seed": seed, "z_mc": z_mc})
+        elapsed = time.perf_counter() - t0
+        timing_rows.append({"B": B, "seed": seed, "wall_time_s": elapsed,
+                             "n_metapaths": len(metapaths)})
+        print(f"B={B} seed={seed}: {elapsed:.3f}s over {len(metapaths)} metapaths", flush=True)
+
+    B_SWEEP_PARTIAL_DIR.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(B_SWEEP_PARTIAL_DIR / f"rows_B{B}.csv", index=False)
+    pd.DataFrame(timing_rows).to_csv(B_SWEEP_PARTIAL_DIR / f"timing_B{B}.csv", index=False)
+    print(f"Wrote partials for B={B} to {B_SWEEP_PARTIAL_DIR}")
+
+
+def run_old_null_b10k() -> None:
+    """Stage 3 (foreground, one pass): the git-history UNSTRATIFIED
+    implementation at b=10,000, seed=42 -- the "why not just raise b on the
+    old null" reference. Genuinely executes the materialized old module
+    against the real HetMat (BoundedHetMat, disk-bound, like the original
+    end-to-end timing) rather than approximating it from the cached S1
+    scores, so this number carries the same disk-I/O-inclusive honesty as
+    the earlier old-vs-new end-to-end comparison -- no new assumption is
+    introduced just because it's convenient.
+    """
+    from src.dwpc_direct import HetMat
+
+    BoundedHetMat = make_bounded_hetmat_cls(HetMat)
+    hetmat = BoundedHetMat(data_dir=DATA_DIR)
+    gene_ids = parse_gene_input(EXAMPLE_GENES_RAW, hetmat)
+    old_mod, old_tmp_path = load_old_query_module()
+
+    print("Running old-null (unstratified) b=10,000, seed=42, one pass ...", flush=True)
+    t0 = time.perf_counter()
+    df = old_mod.query_metapath_z(gene_ids, EXAMPLE_BP_ID, b=10_000, seed=42, hetmat=hetmat)
+    elapsed = time.perf_counter() - t0
+    print(f"old-null b=10,000 seed=42: {elapsed:.3f}s over {len(df)} metapaths", flush=True)
+
+    B_SWEEP_PARTIAL_DIR.mkdir(parents=True, exist_ok=True)
+    df[["metapath", "effect_size_z"]].rename(
+        columns={"effect_size_z": "z_oldnull_b10k"}
+    ).to_csv(B_SWEEP_PARTIAL_DIR / "oldnull_b10k_rows.csv", index=False)
+    pd.DataFrame([{"wall_time_s": elapsed, "n_metapaths": len(df)}]).to_csv(
+        B_SWEEP_PARTIAL_DIR / "oldnull_b10k_timing.csv", index=False
+    )
+    old_tmp_path.unlink(missing_ok=True)
+    print(f"Wrote old-null-b10k partials to {B_SWEEP_PARTIAL_DIR}")
+
+
+def run_analytical_reference_timing() -> None:
+    """Stage: measure the analytical null's own total wall-time across all
+    52 metapaths for one query, from the cached S1 partitions (no HetMat,
+    no disk I/O -- the exact same inputs analytical_gene_set_z would have
+    used, just the closed-form moments step timed in isolation). This is
+    the number the B-sweep tradeoff figure and summary table need on the
+    same "one full query, 52 metapaths" basis the same-null-MC wall-times
+    are measured on; the earlier warm_metapath_timing.csv (kept, still
+    reported in verification.md) only sampled 2 of the 52 metapaths
+    individually and isn't on that basis.
+    """
+    from src.analytical_null import analytical_null
+
+    if not B_SWEEP_ARTIFACTS_PATH.exists():
+        raise SystemExit(
+            f"{B_SWEEP_ARTIFACTS_PATH} not found -- run 'b-sweep-build' first."
+        )
+    with open(B_SWEEP_ARTIFACTS_PATH, "rb") as f:
+        payload = pickle.load(f)
+    metapaths = payload["metapaths"]
+    artifacts = payload["artifacts"]
+
+    n_repeats = 5
+    times = []
+    for _ in range(n_repeats):
+        t0 = time.perf_counter()
+        for mp in metapaths:
+            a = artifacts[mp]
+            analytical_null(a["scores"], a["pools"], a["counts"], a["observed"])
+        times.append(time.perf_counter() - t0)
+    print(f"analytical, {len(metapaths)} metapaths, {n_repeats} repeats: {times}", flush=True)
+
+    B_SWEEP_PARTIAL_DIR.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"run_index": range(n_repeats), "wall_time_s": times,
+                  "n_metapaths": len(metapaths)}).to_csv(
+        B_SWEEP_PARTIAL_DIR / "analytical_reference_timing.csv", index=False
+    )
+    print(f"Wrote analytical reference timing to {B_SWEEP_PARTIAL_DIR}")
+
+
+def finalize_b_sweep() -> None:
+    """Stage 4: merge all partials into the two committed tables and draw
+    the two declared figures. Requires build + all 4 B's + oldnull-b10k +
+    analytical-reference-timing partials to already exist.
+    """
+    from scipy.stats import spearmanr as _spearmanr
+
+    comparison = pd.read_csv(TABLES_DIR / "per_metapath_comparison.csv")
+    z_analytical_by_mp = comparison.set_index("metapath")["z_analytical"]
+
+    missing = [B for B in B_SWEEP_VALUES if not (B_SWEEP_PARTIAL_DIR / f"rows_B{B}.csv").exists()]
+    if missing or not (B_SWEEP_PARTIAL_DIR / "oldnull_b10k_rows.csv").exists():
+        raise SystemExit(f"Missing B-sweep partials in {B_SWEEP_PARTIAL_DIR}: "
+                          f"B={missing}, oldnull_b10k={not (B_SWEEP_PARTIAL_DIR / 'oldnull_b10k_rows.csv').exists()}")
+
+    # ------------------------------------------------------------------
+    # b_sweep_per_metapath.csv
+    # ------------------------------------------------------------------
+    row_frames = [pd.read_csv(B_SWEEP_PARTIAL_DIR / f"rows_B{B}.csv") for B in B_SWEEP_VALUES]
+    per_mp = pd.concat(row_frames, ignore_index=True)
+    per_mp["z_analytical"] = per_mp["metapath"].map(z_analytical_by_mp)
+
+    oldnull_rows = pd.read_csv(B_SWEEP_PARTIAL_DIR / "oldnull_b10k_rows.csv")
+    oldnull_by_mp = oldnull_rows.set_index("metapath")["z_oldnull_b10k"]
+    per_mp["z_oldnull_b10k"] = per_mp["metapath"].map(oldnull_by_mp)
+
+    per_mp_path = TABLES_DIR / "b_sweep_per_metapath.csv"
+    per_mp.to_csv(per_mp_path, index=False)
+    print(f"Wrote {per_mp_path} ({len(per_mp)} rows)")
+
+    # ------------------------------------------------------------------
+    # b_sweep_summary.csv
+    # ------------------------------------------------------------------
+    timing_frames = [pd.read_csv(B_SWEEP_PARTIAL_DIR / f"timing_B{B}.csv") for B in B_SWEEP_VALUES]
+    timing = pd.concat(timing_frames, ignore_index=True)
+
+    summary_rows = []
+    for B in B_SWEEP_VALUES:
+        sub = per_mp[per_mp["B"] == B]
+        rhos = {}
+        for seed in B_SWEEP_SEEDS:
+            s = sub[sub["seed"] == seed].dropna(subset=["z_mc", "z_analytical"])
+            rho_val = _spearmanr(s["z_mc"], s["z_analytical"])[0] if len(s) >= 2 else float("nan")
+            rhos[seed] = rho_val
+        rho_vals = list(rhos.values())
+        dz = (sub["z_mc"] - sub["z_analytical"]).abs().dropna()
+        pivot = sub.pivot(index="metapath", columns="seed", values="z_mc")
+        seed_spread = (pivot.max(axis=1) - pivot.min(axis=1)).dropna()
+        total_wt = timing.loc[timing["B"] == B, "wall_time_s"].sum()
+        summary_rows.append({
+            "row_type": "same_null_mc", "B": B,
+            "rho_seed42": rhos[42], "rho_seed43": rhos[43], "rho_seed44": rhos[44],
+            "rho_mean": float(np.mean(rho_vals)), "rho_range": float(np.ptp(rho_vals)),
+            "median_abs_dz": float(dz.median()) if len(dz) else float("nan"),
+            "median_seed_spread": float(seed_spread.median()) if len(seed_spread) else float("nan"),
+            "total_wall_time_s": float(total_wt), "n_metapaths": len(sub["metapath"].unique()),
+        })
+
+    # analytical reference row
+    ref_timing = pd.read_csv(B_SWEEP_PARTIAL_DIR / "analytical_reference_timing.csv")
+    summary_rows.append({
+        "row_type": "analytical", "B": float("nan"),
+        "rho_seed42": 1.0, "rho_seed43": 1.0, "rho_seed44": 1.0,
+        "rho_mean": 1.0, "rho_range": 0.0,
+        "median_abs_dz": 0.0, "median_seed_spread": 0.0,
+        "total_wall_time_s": float(ref_timing["wall_time_s"].median()),
+        "n_metapaths": int(ref_timing["n_metapaths"].iloc[0]),
+    })
+
+    # old-null-b10k reference row (single seed=42 only -- no cross-seed spread)
+    oldnull_timing = pd.read_csv(B_SWEEP_PARTIAL_DIR / "oldnull_b10k_timing.csv")
+    old_sub = per_mp[["metapath", "z_oldnull_b10k", "z_analytical"]].drop_duplicates("metapath").dropna()
+    rho_old = _spearmanr(old_sub["z_oldnull_b10k"], old_sub["z_analytical"])[0] if len(old_sub) >= 2 else float("nan")
+    dz_old = (old_sub["z_oldnull_b10k"] - old_sub["z_analytical"]).abs()
+    summary_rows.append({
+        "row_type": "old_null_b10k", "B": 10_000,
+        "rho_seed42": rho_old, "rho_seed43": float("nan"), "rho_seed44": float("nan"),
+        "rho_mean": rho_old, "rho_range": float("nan"),
+        "median_abs_dz": float(dz_old.median()) if len(dz_old) else float("nan"),
+        "median_seed_spread": float("nan"),
+        "total_wall_time_s": float(oldnull_timing["wall_time_s"].iloc[0]),
+        "n_metapaths": int(oldnull_timing["n_metapaths"].iloc[0]),
+    })
+
+    summary = pd.DataFrame(summary_rows)
+    summary_path = TABLES_DIR / "b_sweep_summary.csv"
+    summary.to_csv(summary_path, index=False)
+    print(f"Wrote {summary_path}")
+    print(summary.to_string(index=False))
+
+    # ------------------------------------------------------------------
+    # Figure: b_sweep_agreement.png
+    # ------------------------------------------------------------------
+    mc_summary = summary[summary["row_type"] == "same_null_mc"].sort_values("B")
+    old_row = summary[summary["row_type"] == "old_null_b10k"].iloc[0]
+
+    fig, (axr, axd) = plt.subplots(1, 2, figsize=(11, 4.5))
+
+    axr.plot(mc_summary["B"], mc_summary["rho_mean"], "o-", color="#74c476",
+             label="same-null MC (mean over 3 seeds)")
+    axr.fill_between(mc_summary["B"],
+                      mc_summary["rho_mean"] - mc_summary["rho_range"] / 2,
+                      mc_summary["rho_mean"] + mc_summary["rho_range"] / 2,
+                      color="#74c476", alpha=0.2, label="seed range")
+    axr.axhline(1.0, color="#3182bd", linestyle="--", linewidth=1.5,
+                label="analytical (B -> infinity, exact)")
+    axr.scatter([old_row["B"] * 1.6], [old_row["rho_mean"]], color="#fb6a4a",
+                marker="X", s=120, zorder=5,
+                label="old (unstratified) null, b=10,000")
+    axr.set_xscale("log")
+    axr.margins(x=0.15, y=0.12)
+    axr.set_xlabel("B (same-null MC draws)")
+    axr.set_ylabel("Spearman rho vs analytical z")
+    axr.set_title("Rank agreement vs B")
+    axr.legend(fontsize=7, loc="lower left")
+
+    axd.plot(mc_summary["B"], mc_summary["median_abs_dz"], "o-", color="#74c476")
+    axd.fill_between(mc_summary["B"], 0,
+                      mc_summary["median_seed_spread"],
+                      color="#9ecae1", alpha=0.3, label="median seed spread")
+    axd.axhline(0.0, color="#3182bd", linestyle="--", linewidth=1.5,
+                label="analytical (B -> infinity, exact)")
+    axd.scatter([old_row["B"] * 1.6], [old_row["median_abs_dz"]], color="#fb6a4a",
+                marker="X", s=120, zorder=5, label="old null, b=10,000")
+    axd.set_xscale("log")
+    axd.margins(x=0.15, y=0.12)
+    axd.set_xlabel("B (same-null MC draws)")
+    axd.set_ylabel("median |z_mc - z_analytical|")
+    axd.set_title("Absolute error vs B")
+    axd.legend(fontsize=7, loc="center right")
+
+    fig.suptitle(f"Agreement with the analytical null vs B, example query "
+                 f"({EXAMPLE_BP_NAME})")
+    fig.tight_layout()
+    fig.savefig(FIGURES_DIR / "b_sweep_agreement.png", dpi=150)
+    plt.close(fig)
+
+    # ------------------------------------------------------------------
+    # Figure: b_sweep_tradeoff.png
+    # ------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(6.5, 5.5))
+    ax.plot(mc_summary["rho_mean"], mc_summary["total_wall_time_s"], "o-",
+            color="#74c476", zorder=3)
+    for _, r in mc_summary.iterrows():
+        ax.annotate(f"B={int(r['B'])}", (r["rho_mean"], r["total_wall_time_s"]),
+                    textcoords="offset points", xytext=(6, 4), fontsize=8)
+
+    analytical_row = summary[summary["row_type"] == "analytical"].iloc[0]
+    ax.scatter([analytical_row["rho_mean"]], [analytical_row["total_wall_time_s"]],
+               color="#3182bd", marker="*", s=250, zorder=4, label="analytical")
+    ax.annotate("analytical", (analytical_row["rho_mean"], analytical_row["total_wall_time_s"]),
+                textcoords="offset points", xytext=(8, -4), fontsize=8)
+
+    ax.scatter([old_row["rho_mean"]], [old_row["total_wall_time_s"]],
+               color="#fb6a4a", marker="X", s=180, zorder=4, label="old null, b=10,000")
+    ax.annotate("old null\nb=10,000", (old_row["rho_mean"], old_row["total_wall_time_s"]),
+                textcoords="offset points", xytext=(8, 0), fontsize=8)
+
+    ax.set_yscale("log")
+    ax.set_xlabel("Spearman rho vs analytical z (agreement)")
+    ax.set_ylabel("Total null wall-time, one query / 52 metapaths (s, log scale)")
+    ax.set_title("Cost vs agreement: same-null MC (by B), old null, and analytical")
+    ax.legend(loc="center left", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(FIGURES_DIR / "b_sweep_tradeoff.png", dpi=150)
+    plt.close(fig)
+
+    print("Wrote figures/b_sweep_agreement.png and figures/b_sweep_tradeoff.png")
+
+    # ------------------------------------------------------------------
+    # Clean up transient working files (not committed).
+    # ------------------------------------------------------------------
+    import shutil
+    shutil.rmtree(B_SWEEP_PARTIAL_DIR, ignore_errors=True)
+    B_SWEEP_ARTIFACTS_PATH.unlink(missing_ok=True)
+    print("Cleaned up transient B-sweep working files.")
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "b-sweep-build":
+        build_b_sweep_artifacts()
+    elif len(sys.argv) > 1 and sys.argv[1] == "b-sweep-run":
+        run_b_sweep_for_B(int(sys.argv[2]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "b-sweep-oldnull":
+        run_old_null_b10k()
+    elif len(sys.argv) > 1 and sys.argv[1] == "b-sweep-analytical-ref":
+        run_analytical_reference_timing()
+    elif len(sys.argv) > 1 and sys.argv[1] == "b-sweep-finalize":
+        finalize_b_sweep()
+    else:
+        main()

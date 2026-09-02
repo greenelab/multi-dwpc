@@ -128,3 +128,20 @@ system lands in PR 2; this task follows it early).
   restorations, merge-direction wording, cache-semantics truth, filename
   pattern) are not reversed: they describe the machinery and were wrong
   independent of any measurement.
+
+- **2026-09-02** — The B-sweep evidence (`tables/b_sweep_per_metapath.csv`,
+  `tables/b_sweep_summary.csv`, `figures/b_sweep_agreement.png`,
+  `figures/b_sweep_tradeoff.png`, and verification.md's "Agreement and cost
+  versus B" section) was added after the audit passed, at Lucas's direction,
+  as Gate-2 presentation evidence: does same-null agreement with the
+  analytical value increase with `B`, and what is the noise-versus-cost
+  tradeoff of reaching it by raising `B` instead of using the closed form.
+  This is framing for something the design already implies — the analytical
+  null is the stated `B -> infinity` limit of the same stratified null (see
+  `exact_resampling_moments`'s own docstring) — not a new hypothesis, and it
+  is not added to `design.md`; the design's declared-figure list (adapt and
+  verify steps, per "Figures, controls and the reviewer's path") is not
+  retroactively edited to include these two figures. They exist as
+  additional, separately-dated evidence in this task folder, committed and
+  reported like everything else in verification.md, but outside the
+  design's own figure contract.

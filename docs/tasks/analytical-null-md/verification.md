@@ -356,6 +356,158 @@ metapaths (`GpBPpGpBP`, `GpPWpGpBP`, `GpMFpGpBP`) are also analytically
 high, but mid-table ordering diverges considerably (visible as the broad
 scatter around, not tight against, the rank_agreement.png `y = x` line).
 
+## Agreement and cost versus B
+
+Added 2026-09-02, after the audit, as Gate-2 presentation evidence at
+Lucas's direction (see `decisions.md`'s `## verification.md` entry): does
+same-null agreement with the analytical value increase with `B`, and what
+is the noise-versus-cost tradeoff of getting there by raising `B` instead of
+using the closed form? This is presentation framing for evidence already
+implied by the design (the analytical null *is* the `B -> infinity` limit
+of the same stratified null); it is not a new hypothesis, and `design.md`'s
+declared-figure list is not retroactively edited.
+
+**Method.** For each of the 52 metapaths in the committed
+`per_metapath_comparison.csv`, the S1 partition (transformed scores, raw
+leave-target-out capacity, `hurdle_adaptive_bins`, `pools_from_bins` on the
+source rows, `merge_deficient_strata`) was rebuilt from the public modules
+— the same sequence `analytical_gene_set_z` uses internally, stopping short
+of the final `analytical_null` moments call. `z_analytical` itself is
+**not** recomputed; it is read back from the committed table. A
+**same-null** Monte Carlo estimate is then drawn directly against that
+partition: for `B` in `{20, 100, 1,000, 10,000}` x seed in `{42, 43, 44}`,
+`B` independent stratified sets are drawn (`counts[s]` from `pools[s]`,
+without replacement, vectorized per stratum via `numpy.random.default_rng(seed)`
+and an argpartition-of-random-keys SRSWOR trick, chunked over `B` to bound
+memory for large strata), giving `B` set-means of the transformed scores;
+`z_mc = (observed - mean) / std` over those `B` draws. A quick correctness
+check against the exact closed form before running the full sweep (metapath
+`GiGiGpBP`, `B=2,000` and `B=20,000`, seed 42) gave `z_mc = 4.51` and
+`4.46` against the exact `z = 4.4721` — converging, as it must, since the
+same-null MC and `exact_resampling_moments` estimate the same quantity by
+different means.
+
+Separately, the **old-null reference** is the git-history *unstratified*
+implementation (materialized the same way as everywhere else in this file)
+at `b = 10,000`, seed 42, one real pass against the live `HetMat` (disk-
+bound, like the earlier end-to-end timing) — not derived from the cached
+partition, so its wall-time and its answer both carry full fidelity to the
+actual old code path, including whatever inefficiency is in it.
+
+**Commands** (chunked, each its own foreground invocation per the
+instruction to never background this — the `B=10,000` same-null chunk and
+the old-null chunk both ran a few minutes, matching the stated expectation):
+
+```
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-build
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-run 20
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-run 100
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-run 1000
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-run 10000
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-oldnull
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-analytical-ref
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-finalize
+```
+
+Real wall-clock, this machine: `b-sweep-build` (rebuild all 52 partitions
+from the live `HetMat`, disk-bound) 108.12s; `b-sweep-run 20` 0.34s total (3
+seeds); `100` 1.62s; `1000` 16.05s; `10000` 173.08s (57-58s/seed);
+`b-sweep-oldnull` 222.28s (one seed, one pass); `b-sweep-analytical-ref`
+(closed form, all 52 metapaths, 5 repeats, no disk I/O) median 6.39ms.
+
+Tables:
+[`tables/b_sweep_per_metapath.csv`](tables/b_sweep_per_metapath.csv) (624
+rows: 52 metapaths x 4 `B` x 3 seeds, columns `metapath, B, seed, z_mc,
+z_analytical, z_oldnull_b10k`) and
+[`tables/b_sweep_summary.csv`](tables/b_sweep_summary.csv) (one row per `B`
+plus one `analytical` row and one `old_null_b10k` row). Figures:
+[`figures/b_sweep_agreement.png`](figures/b_sweep_agreement.png) (rho and
+median absolute error vs `B`, log x, seed range shaded, analytical as the
+`B -> infinity` reference line, old-null-b10k plotted as a separate marker)
+and [`figures/b_sweep_tradeoff.png`](figures/b_sweep_tradeoff.png) (null
+wall-time, log y, vs agreement — one point per `B`, plus analytical and
+old-null-b10k).
+
+**Real numbers, exactly as measured** (`tables/b_sweep_summary.csv`):
+
+| `B` | rho (mean over 3 seeds) | rho range | median &#124;z_mc − z_analytical&#124; | total wall-time (3 seeds) |
+|---|---|---|---|---|
+| 20 | 0.9752 | 0.0057 | 0.198 | 0.339 s |
+| 100 | 0.9922 | 0.0056 | 0.078 | 1.620 s |
+| 1,000 | 0.9979 | 0.0007 | 0.026 | 16.05 s |
+| 10,000 | 0.9995 | 0.0004 | 0.007 | 173.08 s |
+| analytical (closed form) | 1.0000 (exact) | 0 | 0 | 0.0064 s |
+| old-null, b=10,000 (1 seed) | 0.2829 | n/a (1 seed) | 0.660 | 222.28 s |
+
+**(1) Agreement increases with `B`, monotonically, and clearly converges
+toward the analytical value**: rho climbs 0.975 -> 0.992 -> 0.998 -> 0.9995
+as `B` goes 20 -> 100 -> 1,000 -> 10,000, and median absolute z-error falls
+0.198 -> 0.078 -> 0.026 -> 0.007 over the same span — both heading toward
+the analytical value's own row (rho = 1, error = 0) exactly as the theory
+requires, since the same-null MC and the closed form estimate the identical
+quantity (`exact_resampling_moments`' docstring: "the `B -> infinity` limit
+of the stratified... null"). Even the *smallest* `B = 20` already gets rho
+= 0.975 — the stratification itself, not a large `B`, is doing most of the
+agreement work; raising `B` from there buys diminishing, but real,
+additional convergence. Reported as measured: same-null MC at `B = 10,000`
+does not reach rho = 1 exactly (rho = 0.9995, not 1.0) — finite `B` leaves
+a small residual gap, honestly present in the number.
+
+**(2) The old-null series answers "why not just raise b" directly, and the
+answer is no** — raising `b` on the *old, unstratified* null does not
+converge to the analytical answer at all. At `b = 10,000` (500x the app's
+own `b = 20` default, and the same `B` as the same-null MC's best-agreement
+point), the old null's rho against the analytical z is **0.283** — *worse*
+than the same-null MC gets at its cheapest setting (`B = 20`, rho = 0.975),
+and close to the old null's own `b = 20` rank-agreement figure measured
+earlier in this document (0.2605, "Rank agreement" section above) — i.e.
+raising `b` 500x on the old null moved its agreement with the analytical
+answer from 0.2605 to 0.283, essentially nowhere. This is the expected
+result, not a surprise: the old null draws uniformly from the *whole* gene
+universe, ignoring degree/capacity entirely, so it is consistently
+estimating a **different, degree-blind quantity** — more `b` reduces *its
+own* sampling noise around *that* quantity, not the distance between that
+quantity and the degree-stratified analytical answer. The `b_sweep_agreement.png`
+figure makes this visually explicit: the old-null-b10k marker sits far
+below the same-null MC's whole convergence trajectory, not on it.
+
+**(3) The cost side of the tradeoff, in one number each**: the analytical
+closed form scores all 52 metapaths for one query in **6.4 ms**
+(`b-sweep-analytical-ref`, median of 5, no disk I/O — the same inputs
+`analytical_gene_set_z` would use, timed in isolation). Same-null MC at
+`B = 10,000` (the setting that gets closest to the analytical answer) costs
+**173 s** per 3-seed sweep — roughly **9,000x** the closed form's cost for
+a result that is still not exactly it (rho = 0.9995, not 1). The old null
+at `b = 10,000` costs **222 s**, worse than same-null MC at the same `B`
+(disk I/O plus the old implementation's own Python-loop-bound draw
+generation — 10,000 sequential `rng.choice` calls, then a further 10,000-
+iteration Python loop per metapath for `get_dwpc_for_pairs`), **for a rho
+of 0.283**: it is the single worst point on the whole plot, both slowest
+and least accurate — genuinely worse than doing nothing extra, i.e. worse
+than staying at the app's own `b = 20` default (rho 0.2605, 100x cheaper).
+`b_sweep_tradeoff.png` puts this in one panel exactly as asked: the old
+null sits top-left (expensive, wrong), the same-null MC curve runs from
+lower-left toward upper-right as `B` grows (cheaper-but-noisier to
+costlier-but-closer), and the analytical point sits alone in the
+bottom-right corner (cheapest and exact) — nothing on the same-null MC
+curve, however large `B` gets, reaches that corner without also paying the
+`O(B)` cost the closed form skips entirely.
+
+**Honest caveats**: (a) `old_null_b10k`'s row uses a single seed (42), so
+no seed-to-seed spread is reported for it (`n/a` in the table above) —
+unlike the same-null MC rows, which average over 3 seeds; this matches
+what the task asked for ("one pass") but means the old-null point is not
+directly seed-range-comparable to the same-null curve. (b) The same-null MC
+wall-times and the analytical reference wall-time are measured on the
+identical basis (cached S1 partitions, no disk I/O, one full query across
+52 metapaths) and are directly comparable; the old-null-b10k wall-time
+additionally includes matrix disk I/O (like the original end-to-end timing
+section above), so part of its 222s is not "null generation" in the same
+narrow sense — it is still the correct number to report, since it is what
+the real old code path actually costs end-to-end, and the task asked for
+this reference to be run "genuinely" rather than approximated from the
+cached scores.
+
 ## Full test suite
 
 ```
@@ -384,12 +536,38 @@ Green, all 65 collected tests across `tests/test_*.py` (8 files).
 | Median latency, end-to-end (disk-bound) | new 103.22 s vs old 85.30 s (new **slower**, 0.83x) |
 | Median latency, warm matrix (`GiGiGpBP`) | new 69.98 ms vs old 8.59 ms (new **slower**, 0.12x) |
 | Spearman rho (analytical vs MC seed=42 rank) | 0.2605 (p=0.088, n=44) |
+| B-sweep: rho, same-null MC at B=20/100/1,000/10,000 | 0.9752 / 0.9922 / 0.9979 / 0.9995 (mean over 3 seeds; monotonically increasing) |
+| B-sweep: rho, old (unstratified) null at b=10,000 | 0.2829 (single seed; does not converge) |
+| B-sweep: wall-time, analytical (52 metapaths, 1 query) vs same-null MC B=10,000 (3 seeds) vs old-null b=10,000 (1 seed) | 6.4 ms vs 173.08 s (~9,000x) vs 222.28 s (~34,700x) |
 
 ## Reproducing
 
 ```
 conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py
 ```
+
+The B-sweep (Gate-2 evidence, added after the audit — see "Agreement and
+cost versus B" above) is a separate, chunked set of stages on the same
+script, each its own foreground invocation:
+
+```
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-build
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-run 20
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-run 100
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-run 1000
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-run 10000
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-oldnull
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-analytical-ref
+conda activate multi_dwpc && python docs/tasks/analytical-null-md/verify_query.py b-sweep-finalize
+```
+
+`b-sweep-build` regenerates `_b_sweep_artifacts.pkl` (a transient, uncommitted
+cache of the 52 metapaths' S1 partitions); each `b-sweep-run`/`b-sweep-oldnull`/
+`b-sweep-analytical-ref` stage writes partial CSVs to a transient, uncommitted
+`_b_sweep_partials/` directory (so an interrupted sweep survives — resume by
+re-running only the missing `B` stages); `b-sweep-finalize` merges everything
+into the two committed tables and two figures, then deletes both transient
+working locations.
 
 regenerates `tables/*.csv` and `figures/*.png` from scratch (~25 minutes on
 a memory-constrained machine under `BoundedHetMat`; faster on a machine that
