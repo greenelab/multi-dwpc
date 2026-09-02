@@ -476,8 +476,12 @@ closed form scores all 52 metapaths for one query in **6.4 ms**
 (`b-sweep-analytical-ref`, median of 5, no disk I/O — the same inputs
 `analytical_gene_set_z` would use, timed in isolation). Same-null MC at
 `B = 10,000` (the setting that gets closest to the analytical answer) costs
-**173 s** per 3-seed sweep — roughly **9,000x** the closed form's cost for
-a result that is still not exactly it (rho = 0.9995, not 1). The old null
+**173.08 s** for its 3-seed sweep (`total_wall_time_s`,
+`tables/b_sweep_summary.csv`; 57-58 s per individual seed, see "Command"
+above) — roughly **27,000x** the closed form's 6.4 ms (the ratio of the
+3-seed total to the single-run analytical time; per individual seed it is
+roughly 9,000x) for a result that is still not exactly it (rho = 0.9995,
+not 1). The old null
 at `b = 10,000` costs **222 s**, worse than same-null MC at the same `B`
 (disk I/O plus the old implementation's own Python-loop-bound draw
 generation — 10,000 sequential `rng.choice` calls, then a further 10,000-
@@ -538,7 +542,7 @@ Green, all 65 collected tests across `tests/test_*.py` (8 files).
 | Spearman rho (analytical vs MC seed=42 rank) | 0.2605 (p=0.088, n=44) |
 | B-sweep: rho, same-null MC at B=20/100/1,000/10,000 | 0.9752 / 0.9922 / 0.9979 / 0.9995 (mean over 3 seeds; monotonically increasing) |
 | B-sweep: rho, old (unstratified) null at b=10,000 | 0.2829 (single seed; does not converge) |
-| B-sweep: wall-time, analytical (52 metapaths, 1 query) vs same-null MC B=10,000 (3 seeds) vs old-null b=10,000 (1 seed) | 6.4 ms vs 173.08 s (~9,000x) vs 222.28 s (~34,700x) |
+| B-sweep: wall-time, analytical (52 metapaths, 1 query) vs same-null MC B=10,000 (3-seed total) vs old-null b=10,000 (1 seed) | 6.4 ms vs 173.08 s (~27,000x; ~9,000x per individual seed) vs 222.28 s (~34,700x) |
 
 ## Reproducing
 
