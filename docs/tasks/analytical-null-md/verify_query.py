@@ -115,13 +115,26 @@ def make_bounded_hetmat_cls(base_cls):
 
 
 def load_old_query_module() -> "module":
-    old_src = subprocess.run(
-        ["git", "show", "upstream/main:src/multi_dwpc_query.py"],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
+    refs = ["upstream/main", "origin/main", "main"]
+    last_err = None
+    for ref in refs:
+        try:
+            old_src = subprocess.run(
+                ["git", "show", f"{ref}:src/multi_dwpc_query.py"],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            break
+        except subprocess.CalledProcessError as err:
+            last_err = err
+    else:
+        raise RuntimeError(
+            "Could not load base src/multi_dwpc_query.py via git; tried: "
+            + ", ".join(refs)
+        ) from last_err
+
     tmp_path = TASK_DIR / "_old_multi_dwpc_query_snapshot.py"
     tmp_path.write_text(old_src)
     spec = importlib.util.spec_from_file_location("_old_multi_dwpc_query", tmp_path)

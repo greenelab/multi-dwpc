@@ -1,7 +1,8 @@
-"""Thin project-owned wrapper around the vendored exact_resampling_moments
-kernel. Derives z/p locally via the normal approximation -- never surfaces
-HetNetEX-MD's own p_edgeworth/p_normal/exact_median_pvalue, per the
-validation spec's tail-calibration finding (those are anti-conservative,
+"""Thin project-owned wrapper around the pinned `exact_resampling_moments`
+kernel (imported via :mod:`src.hetnetex_md_import`). Derives z/p locally via
+the normal approximation -- never surfaces HetNetEX-MD's own
+p_edgeworth/p_normal/exact_median_pvalue, per the validation spec's
+tail-calibration finding (those are anti-conservative,
 1.21x-13.5x excess in the tail).
 """
 
