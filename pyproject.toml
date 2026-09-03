@@ -22,6 +22,7 @@ dependencies = [
     "hetmatpy==0.1.0",
     "hetnetpy @ git+https://github.com/hetio/hetio.git@0a81e9ea675e2c20f235f5d74598053c1332cb85",
     "hetnet-analysis @ git+https://github.com/CU-DBMI/hetionet-analysis.git@f371064da1498ac984aa6ec6ed0ba2739c7b0259",
+    "hetnetex-md @ git+https://github.com/tghosh30/HetNetEx-MD.git@26f5ba85bd9b9886eafebcbc544879e531f5262e",
 ]
 
 [project.optional-dependencies]

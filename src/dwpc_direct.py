@@ -425,6 +425,12 @@ def _compute_dwpc_matrix_worker(args: Tuple[str, str, float]) -> Tuple[str, spar
     return metapath, matrix
 
 
+
+# Single definition of the default damping exponent, so other modules
+# (e.g. src/capacity.py) import it instead of redefining their own default.
+DEFAULT_DAMPING = 0.5
+
+
 class HetMat:
     """
     HetMat data structure for efficient DWPC computation.
@@ -443,7 +449,7 @@ class HetMat:
     def __init__(
         self,
         data_dir: Union[str, Path],
-        damping: float = 0.5,
+        damping: float = DEFAULT_DAMPING,
         cache_dir: Optional[Union[str, Path]] = None,
         use_disk_cache: bool = True,
         write_disk_cache: bool = True,

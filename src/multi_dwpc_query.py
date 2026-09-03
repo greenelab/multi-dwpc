@@ -5,11 +5,13 @@ See ``docs/web_tool_plan_2026-04-23.md`` for scope. MVP is Gene -> BP only.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from src.analytical_null import analytical_gene_set_z
 from src.dwpc_direct import HetMat, reverse_metapath_abbrev
 from src.intermediate_sharing import enumerate_gene_intermediates
 from src.path_enumeration import (
@@ -17,6 +19,9 @@ from src.path_enumeration import (
 )
 
 USER_QUERY_ID = "user_query"
+# Deprecated: query_metapath_z's null is now the analytical, capacity-
+# stratified null (analytical_gene_set_z); it no longer draws b Monte-Carlo
+# subsets. Kept for callers that still import this constant.
 DEFAULT_B = 20
 DEFAULT_PATH_Z_MIN = 1.65
 
@@ -86,18 +91,40 @@ def query_metapath_z(
     target_id: str,
     target_type: str = "BP",
     *,
-    b: int = DEFAULT_B,
-    seed: int = 42,
+    b: int | None = None,
+    seed: int | None = None,
     metapaths: list[str] | None = None,
     hetmat: HetMat,
 ) -> pd.DataFrame:
     """Return per-metapath z-score for the user's gene set against ``target_id``.
 
-    Null model: ``b`` random gene subsets of the same size drawn from the full
-    gene universe. z = (real - null_mean) / null_std, matching
-    ``build_b_seed_runs``. Differs from the paper's degree-preserving XSWAP
-    null; see docs/web_tool_plan_2026-04-23.md.
+    Null model: the analytical, capacity-stratified null
+    (:func:`src.analytical_null.analytical_gene_set_z`). For each metapath,
+    genes are partitioned into strata by leave-target-out capacity (adaptive
+    bins, ``min_stratum_size=50``, deficient strata merged into their
+    lower-capacity neighbour, and the lowest stratum merged upward); the
+    null's mean and standard deviation are the exact resampling moments of
+    the transformed DWPC score
+    (``arcsinh(raw / raw_mean)``) over all same-stratum draws that exclude the
+    user's own genes -- no Monte-Carlo sampling, so the same query returns the
+    same z every time. ``real_mean_score``/``null_mean_score`` stay on that
+    transformed scale; ``effect_size_z = (real - null_mean) / null_std``
+    remains the ranking key, and the frame also carries the null's one-sided
+    ``p_value``. A zero-variance null yields a NaN z/p on a kept row. A
+    metapath whose DWPC matrix cannot be resolved against the metagraph is
+    skipped.
+
+    ``b`` and ``seed`` are deprecated and ignored (kept for call
+    compatibility with the earlier Monte-Carlo null).
     """
+    if b is not None or seed is not None:
+        warnings.warn(
+            "`b`/`seed` are ignored; query_metapath_z now uses the "
+            "analytical, capacity-stratified null instead of Monte-Carlo "
+            "gene-subset resampling.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     if metapaths is None:
         metapaths = discover_source_target_metapaths(hetmat, "G", target_type)
     if not metapaths:
@@ -110,39 +137,31 @@ def query_metapath_z(
     if source_idx.size == 0:
         raise ValueError("None of the provided gene IDs were found in Hetionet")
 
-    gene_pool = np.fromiter(gene_idx_map.values(), dtype=np.int64)
     target_pos = _target_position(hetmat, target_type, target_id)
-    target_idx_arr = np.full(source_idx.size, target_pos, dtype=np.int64)
-
-    rng = np.random.default_rng(seed)
-    perm_idx = np.stack(
-        [rng.choice(gene_pool, size=source_idx.size, replace=False) for _ in range(b)]
-    )
 
     rows = []
     for mp in metapaths:
-        real_mean = float(hetmat.get_dwpc_for_pairs(mp, source_idx, target_idx_arr).mean())
-        null_means = np.array(
-            [
-                hetmat.get_dwpc_for_pairs(
-                    mp, perm_idx[i], np.full(source_idx.size, target_pos, dtype=np.int64)
-                ).mean()
-                for i in range(b)
-            ]
-        )
-        null_mean = float(null_means.mean())
-        null_std = float(null_means.std(ddof=1))
-        z = (real_mean - null_mean) / null_std if null_std > 0 else np.nan
+        try:
+            res = analytical_gene_set_z(hetmat, mp, source_idx, target_pos)
+        except KeyError:
+            # Matrix resolution routes through metagraph.metapath_from_abbrev,
+            # which raises KeyError for an abbreviation not in the metagraph
+            # -- the same failure _valid_metapaths screens for. Skip rather
+            # than fail the whole query.
+            continue
         rows.append(
             {
                 "metapath": mp,
-                "real_mean_score": real_mean,
-                "null_mean_score": null_mean,
-                "null_std_score": null_std,
-                "diff": real_mean - null_mean,
-                "effect_size_z": z,
+                "real_mean_score": res.real_mean,
+                "null_mean_score": res.null_mean,
+                "null_std_score": res.null_std,
+                "diff": res.real_mean - res.null_mean,
+                "effect_size_z": res.z,
+                "p_value": res.p_value,
             }
         )
+    if not rows:
+        raise ValueError("No metapaths could be scored with the analytical null")
     return pd.DataFrame(rows).sort_values("effect_size_z", ascending=False, ignore_index=True)
 
 
