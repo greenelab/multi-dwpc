@@ -17,7 +17,6 @@ import streamlit as st
 
 from src.dwpc_direct import HetMat
 from src.multi_dwpc_query import (
-    DEFAULT_B,
     DEFAULT_PATH_Z_MIN,
     discover_source_target_metapaths,
     query_intermediates_and_paths,
@@ -461,7 +460,7 @@ if run:
         st.error("No valid gene symbols or Entrez IDs parsed from input.")
         st.stop()
     hetmat = get_hetmat()
-    with st.spinner(f"Computing metapath z for {len(gene_ids)} genes (b={DEFAULT_B})"):
+    with st.spinner(f"Computing metapath z for {len(gene_ids)} genes (analytical null)"):
         z_df = query_metapath_z(gene_ids, target_id, hetmat=hetmat)
     st.session_state["z_df"] = z_df
     st.session_state["gene_ids"] = gene_ids

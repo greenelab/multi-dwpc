@@ -1,0 +1,7 @@
+implementation,run_index,wall_clock_s
+analytical,0,108.03685649999898
+analytical,1,103.21726466699874
+analytical,2,102.70627904200046
+monte_carlo_b20,0,84.93274595799994
+monte_carlo_b20,1,85.30239133299983
+monte_carlo_b20,2,86.14567041599912
