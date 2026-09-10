@@ -660,6 +660,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hetnetex-md"
+version = "0.1.0"
+source = { git = "https://github.com/tghosh30/HetNetEx-MD.git?rev=26f5ba85bd9b9886eafebcbc544879e531f5262e#26f5ba85bd9b9886eafebcbc544879e531f5262e" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+
+[[package]]
 name = "hetnetpy"
 version = "0.3.2.dev11+g0a81e9ea6"
 source = { git = "https://github.com/hetio/hetio.git?rev=0a81e9ea675e2c20f235f5d74598053c1332cb85#0a81e9ea675e2c20f235f5d74598053c1332cb85" }
@@ -1407,6 +1416,7 @@ dependencies = [
     { name = "djangorestframework" },
     { name = "hetmatpy" },
     { name = "hetnet-analysis" },
+    { name = "hetnetex-md" },
     { name = "hetnetpy" },
     { name = "httpx" },
     { name = "jupyterlab" },
@@ -1435,6 +1445,7 @@ requires-dist = [
     { name = "djangorestframework" },
     { name = "hetmatpy", specifier = "==0.1.0" },
     { name = "hetnet-analysis", git = "https://github.com/CU-DBMI/hetionet-analysis.git?rev=f371064da1498ac984aa6ec6ed0ba2739c7b0259" },
+    { name = "hetnetex-md", git = "https://github.com/tghosh30/HetNetEx-MD.git?rev=26f5ba85bd9b9886eafebcbc544879e531f5262e" },
     { name = "hetnetpy", git = "https://github.com/hetio/hetio.git?rev=0a81e9ea675e2c20f235f5d74598053c1332cb85" },
     { name = "httpx" },
     { name = "jupyterlab" },
