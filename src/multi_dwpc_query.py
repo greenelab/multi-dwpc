@@ -11,23 +11,24 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.analytical_null import analytical_gene_set_z
-from src.dwpc_direct import HetMat, reverse_metapath_abbrev
+from src.dwpc_direct import HetMat, load_node_ids, reverse_metapath_abbrev, transform_dwpc
 from src.intermediate_sharing import enumerate_gene_intermediates
 from src.path_enumeration import (
     EdgeLoader, NODE_FILES, NODE_TYPE_NAMES, load_node_maps, parse_metapath,
 )
+from src.query_dwpc import UnsupportedMetapathError
+from src.summary_null import query_capacity, summary_gene_set_z
 
 USER_QUERY_ID = "user_query"
-# Deprecated: query_metapath_z's null is now the analytical, capacity-
-# stratified null (analytical_gene_set_z); it no longer draws b Monte-Carlo
-# subsets. Kept for callers that still import this constant.
+# Deprecated: query_metapath_z's null is the analytical, capacity-stratified
+# null; it no longer draws b Monte-Carlo subsets. Kept for callers that still
+# import this constant.
 DEFAULT_B = 20
 DEFAULT_PATH_Z_MIN = 1.65
 
 
-def _gene_index_map(hetmat: HetMat) -> dict[int, int]:
-    nodes = hetmat.get_nodes(NODE_TYPE_NAMES["G"])
+def _gene_index_map(data_dir: Path) -> dict[int, int]:
+    nodes = load_node_ids(Path(data_dir), NODE_TYPE_NAMES["G"])
     return dict(zip(nodes["identifier"].astype(int), nodes["position"].astype(int)))
 
 
@@ -78,8 +79,8 @@ def discover_source_target_metapaths(
     return _valid_metapaths(hetmat, sorted(set(oriented)))
 
 
-def _target_position(hetmat: HetMat, target_type: str, target_id: str) -> int:
-    nodes = hetmat.get_nodes(NODE_TYPE_NAMES[target_type])
+def _target_position(data_dir: Path, target_type: str, target_id: str) -> int:
+    nodes = load_node_ids(Path(data_dir), NODE_TYPE_NAMES[target_type])
     hit = nodes.loc[nodes["identifier"].astype(str) == str(target_id), "position"]
     if len(hit) == 0:
         raise ValueError(f"Target {target_id!r} not found among {target_type} nodes")
@@ -94,12 +95,19 @@ def query_metapath_z(
     b: int | None = None,
     seed: int | None = None,
     metapaths: list[str] | None = None,
-    hetmat: HetMat,
+    bundle,
+    query_dwpc,
 ) -> pd.DataFrame:
     """Return per-metapath z-score for the user's gene set against ``target_id``.
 
-    Null model: the analytical, capacity-stratified null
-    (:func:`src.analytical_null.analytical_gene_set_z`). For each metapath,
+    Reads no DWPC matrix: the query genes' DWPC comes from ``query_dwpc``
+    (:class:`src.query_dwpc.QueryDwpc`, computed from edge files) and each
+    stratum's summary from ``bundle`` (:class:`src.null_bundle.NullBundle`,
+    precomputed on Alpine), combined by :func:`src.summary_null.summary_gene_set_z`.
+    Results match the matrix-based :func:`src.analytical_null.analytical_gene_set_z`
+    within ~1e-12 relative. Gene IDs are a set (duplicates count once).
+
+    Null model: the analytical, capacity-stratified null. For each metapath,
     genes are partitioned into strata by leave-target-out capacity (adaptive
     bins, ``min_stratum_size=50``, deficient strata merged into their
     lower-capacity neighbour, and the lowest stratum merged upward); the
@@ -111,7 +119,7 @@ def query_metapath_z(
     transformed scale; ``effect_size_z = (real - null_mean) / null_std``
     remains the ranking key, and the frame also carries the null's one-sided
     ``p_value``. A zero-variance null yields a NaN z/p on a kept row. A
-    metapath whose DWPC matrix cannot be resolved against the metagraph is
+    metapath ``query_dwpc`` cannot compute, or absent from the bundle, is
     skipped.
 
     ``b`` and ``seed`` are deprecated and ignored (kept for call
@@ -125,30 +133,36 @@ def query_metapath_z(
             DeprecationWarning,
             stacklevel=2,
         )
+    if target_type != "BP":
+        raise ValueError("The null bundle covers Gene -> Biological Process only")
     if metapaths is None:
-        metapaths = discover_source_target_metapaths(hetmat, "G", target_type)
+        metapaths = bundle.metapaths
     if not metapaths:
         raise ValueError("No valid metapaths for this source/target type")
 
-    gene_idx_map = _gene_index_map(hetmat)
-    source_idx = np.array(
-        [gene_idx_map[g] for g in gene_ids if g in gene_idx_map], dtype=np.int64
+    gene_idx_map = _gene_index_map(bundle.data_dir)
+    source_idx = np.unique(
+        np.array([gene_idx_map[g] for g in gene_ids if g in gene_idx_map], dtype=np.int64)
     )
     if source_idx.size == 0:
         raise ValueError("None of the provided gene IDs were found in Hetionet")
 
-    target_pos = _target_position(hetmat, target_type, target_id)
+    target_pos = _target_position(bundle.data_dir, target_type, target_id)
+    strata = bundle.strata_for_target(target_pos)
 
     rows = []
     for mp in metapaths:
-        try:
-            res = analytical_gene_set_z(hetmat, mp, source_idx, target_pos)
-        except KeyError:
-            # Matrix resolution routes through metagraph.metapath_from_abbrev,
-            # which raises KeyError for an abbreviation not in the metagraph
-            # -- the same failure _valid_metapaths screens for. Skip rather
-            # than fail the whole query.
+        if mp not in strata:
             continue
+        try:
+            values = query_dwpc.target_values(mp, source_idx, target_pos)
+        except UnsupportedMetapathError:
+            continue
+        res = summary_gene_set_z(
+            strata[mp],
+            transform_dwpc(values, bundle.raw_mean(mp)),
+            query_capacity(bundle.row_sums(mp)[source_idx], values),
+        )
         rows.append(
             {
                 "metapath": mp,
@@ -171,7 +185,6 @@ def query_intermediates_and_paths(
     metapath: str,
     *,
     repo_root: Path,
-    hetmat: HetMat,
     target_type: str = "BP",
     path_top_k: int = 100,
     path_z_min: float = DEFAULT_PATH_Z_MIN,
@@ -191,9 +204,9 @@ def query_intermediates_and_paths(
     maps = load_node_maps(repo_root, node_types)
     edge_loader = EdgeLoader(repo_root / "data" / "edges")
 
-    gene_idx_map = _gene_index_map(hetmat)
+    gene_idx_map = _gene_index_map(repo_root / "data")
     valid_gene_ids = [int(g) for g in gene_ids if int(g) in gene_idx_map]
-    target_pos = _target_position(hetmat, target_type, target_id)
+    target_pos = _target_position(repo_root / "data", target_type, target_id)
 
     # Optional manual pool-score diagnostic: re-enumerate paths per gene to
     # surface pool statistics for debugging empty results. This duplicates the

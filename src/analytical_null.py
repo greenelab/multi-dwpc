@@ -20,6 +20,7 @@ from src.hetnetex_md_import import exact_resampling_moments
 from src.hurdle_adaptive_bins import hurdle_adaptive_bins, merge_deficient_strata
 from src.pool_assembly import pools_from_bins
 from src.sparse_column import dense_column
+from src.summary_null import GeneSetZResult
 
 
 @dataclass
@@ -77,17 +78,6 @@ def analytical_null(
         mean=mean, var=var, std=std, z=float(z), p=p,
         n_pool=n_pool, k_total=k_total,
     )
-
-
-@dataclass
-class GeneSetZResult:
-    real_mean: float
-    null_mean: float
-    null_std: float
-    z: float
-    p_value: float
-    n_active_strata: int
-    merges: list[tuple[int, int]]
 
 
 def analytical_gene_set_z(

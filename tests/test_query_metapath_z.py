@@ -1,4 +1,5 @@
 import math
+import subprocess
 import sys
 import warnings
 from pathlib import Path
@@ -11,186 +12,164 @@ import pandas.testing as pdt
 import pytest
 from scipy import sparse
 
+from src.analytical_null import analytical_gene_set_z
+from src.dwpc_direct import transform_dwpc
 from src.multi_dwpc_query import query_metapath_z
+from src.query_dwpc import UnsupportedMetapathError
+from src.summary_null import build_strata
 
 GOOD_MP = "GaDlA"
 FLAT_MP = "GaDlB"
 BAD_MP = "GbAlG"
+RAW_MEAN = 3.0
+N = 60
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-class _StubHetMat:
-    """Minimal hetmat double covering the calls query_metapath_z makes when
-    ``metapaths`` is supplied explicitly (discovery is bypassed): node lookup
-    for genes/target, and ``analytical_gene_set_z``'s matrix + stats access.
-    """
+def _matrices():
+    rng = np.random.default_rng(3)
+    target0 = rng.exponential(scale=1.0, size=N)
+    target1 = rng.exponential(scale=2.0, size=N) + 0.1  # capacity key, > 0
+    source_positions = rng.choice(N, size=10, replace=False)
+    enriched = target0.copy()
+    enriched[source_positions] += 20.0  # planted enrichment
+    return source_positions, {
+        GOOD_MP: sparse.csr_matrix(np.column_stack([enriched, target1])),
+        FLAT_MP: sparse.csr_matrix(np.column_stack([np.full(N, 2.0), target1])),  # zero variance
+    }
 
-    def __init__(self):
-        rng = np.random.default_rng(3)
-        n = 60
-        target0 = rng.exponential(scale=1.0, size=n)
-        target1 = rng.exponential(scale=2.0, size=n) + 0.1  # capacity key, > 0
 
-        self.source_positions = rng.choice(n, size=10, replace=False)
-        enriched = target0.copy()
-        enriched[self.source_positions] += 20.0  # planted enrichment
+class _StubBundle:
+    """Bundle built from small matrices exactly as build_null_bundle.py would."""
 
-        self._matrices = {
-            GOOD_MP: sparse.csr_matrix(np.column_stack([enriched, target1])),
-            FLAT_MP: sparse.csr_matrix(
-                np.column_stack([np.full(n, 2.0), target1])
-            ),  # zero-variance target column
-        }
-        self.metapath_stats = pd.DataFrame(
-            {"metapath": [GOOD_MP, FLAT_MP], "dwpc_raw_mean": [3.0, 3.0]}
-        )
-        gene_identifiers = np.arange(1, n + 1)
-        self._gene_nodes = pd.DataFrame(
-            {"identifier": gene_identifiers, "position": np.arange(n)}
-        )
-        self._target_nodes = pd.DataFrame({"identifier": ["GO:1"], "position": [0]})
+    def __init__(self, data_dir, matrices, metapaths):
+        self.data_dir = data_dir
+        self.metapaths = metapaths
+        self._matrices = matrices
 
-    @property
-    def gene_ids(self) -> list[int]:
-        return (self.source_positions + 1).tolist()
+    def raw_mean(self, metapath):
+        return RAW_MEAN
 
-    def get_nodes(self, name):
-        if name == "Gene":
-            return self._gene_nodes
-        if name == "Biological Process":
-            return self._target_nodes
-        raise KeyError(name)
+    def row_sums(self, metapath):
+        return np.asarray(self._matrices[metapath].sum(axis=1)).ravel()
+
+    def strata_for_target(self, target_position):
+        tables = {}
+        for metapath, matrix in self._matrices.items():
+            column = matrix[:, target_position].toarray().ravel()
+            capacity = self.row_sums(metapath) - column
+            tables[metapath] = build_strata(capacity, transform_dwpc(column, RAW_MEAN), 50)
+        return tables
+
+
+class _StubQueryDwpc:
+    def __init__(self, matrices):
+        self._matrices = matrices
+
+    def target_values(self, metapath, genes, target_position):
+        if metapath not in self._matrices:
+            raise UnsupportedMetapathError(metapath)
+        return self._matrices[metapath][genes, target_position].toarray().ravel()
+
+
+class _ReferenceHetMat:
+    def __init__(self, matrices):
+        self._matrices = matrices
+        self.metapath_stats = pd.DataFrame({"metapath": list(matrices), "dwpc_raw_mean": RAW_MEAN})
 
     def compute_dwpc_matrix(self, metapath, damping=None):
-        if metapath not in self._matrices:
-            raise KeyError(metapath)
         return self._matrices[metapath]
 
     def get_dwpc_row_sums(self, metapath, damping=None):
-        return np.asarray(self.compute_dwpc_matrix(metapath, damping).sum(axis=1)).ravel()
+        return np.asarray(self._matrices[metapath].sum(axis=1)).ravel()
 
 
-EXPECTED_COLUMNS = [
-    "metapath",
-    "real_mean_score",
-    "null_mean_score",
-    "null_std_score",
-    "diff",
-    "effect_size_z",
-    "p_value",
-]
+@pytest.fixture
+def setup(tmp_path):
+    nodes = tmp_path / "nodes"
+    nodes.mkdir()
+    pd.DataFrame({"identifier": np.arange(1, N + 1), "name": [f"g{i}" for i in range(N)],
+                  "position": np.arange(N)}).to_csv(nodes / "Gene.tsv", sep="\t", index=False)
+    pd.DataFrame({"identifier": ["GO:1"], "name": ["bp"], "position": [0]}).to_csv(
+        nodes / "Biological Process.tsv", sep="\t", index=False)
+    source_positions, matrices = _matrices()
+    kwargs = dict(bundle=_StubBundle(tmp_path, matrices, [GOOD_MP, FLAT_MP]),
+                  query_dwpc=_StubQueryDwpc(matrices))
+    return (source_positions + 1).tolist(), matrices, kwargs
 
 
-def test_frame_columns_and_ranking():
-    hetmat = _StubHetMat()
-    df = query_metapath_z(
-        hetmat.gene_ids,
-        "GO:1",
-        metapaths=[GOOD_MP, FLAT_MP],
-        hetmat=hetmat,
-    )
+EXPECTED_COLUMNS = ["metapath", "real_mean_score", "null_mean_score", "null_std_score", "diff",
+                    "effect_size_z", "p_value"]
+
+
+def test_matches_the_matrix_based_adapter(setup):
+    gene_ids, matrices, kwargs = setup
+    df = query_metapath_z(gene_ids, "GO:1", **kwargs).set_index("metapath")
+    positions = np.array(sorted(g - 1 for g in gene_ids))
+    for metapath in matrices:
+        reference = analytical_gene_set_z(_ReferenceHetMat(matrices), metapath, positions, 0)
+        row = df.loc[metapath]
+        for column, value in [("real_mean_score", reference.real_mean), ("null_mean_score", reference.null_mean),
+                              ("effect_size_z", reference.z)]:
+            if math.isnan(value):
+                assert math.isnan(row[column])
+            else:
+                assert row[column] == pytest.approx(value, rel=1e-12)
+
+
+def test_frame_columns_and_ranking(setup):
+    gene_ids, _, kwargs = setup
+    df = query_metapath_z(gene_ids, "GO:1", **kwargs)
     assert list(df.columns) == EXPECTED_COLUMNS
-    # Finite rows sorted effect_size_z descending; NaN rows sort last (pandas default).
-    finite = df["effect_size_z"].dropna()
-    assert list(finite) == sorted(finite, reverse=True)
-    assert math.isnan(df.iloc[-1]["effect_size_z"])
-    assert df.iloc[-1]["metapath"] == FLAT_MP
-
-
-def test_zero_variance_metapath_row_is_nan_not_dropped():
-    hetmat = _StubHetMat()
-    df = query_metapath_z(
-        hetmat.gene_ids,
-        "GO:1",
-        metapaths=[GOOD_MP, FLAT_MP],
-        hetmat=hetmat,
-    )
-    flat_row = df[df["metapath"] == FLAT_MP].iloc[0]
-    assert math.isnan(flat_row["effect_size_z"])
-    assert math.isnan(flat_row["p_value"])
-
-
-def test_unresolvable_metapath_is_skipped_not_fatal():
-    hetmat = _StubHetMat()
-    df = query_metapath_z(
-        hetmat.gene_ids,
-        "GO:1",
-        metapaths=[GOOD_MP, BAD_MP],
-        hetmat=hetmat,
-    )
-    assert list(df["metapath"]) == [GOOD_MP]
-
-
-def test_all_metapaths_unresolvable_raises_value_error():
-    hetmat = _StubHetMat()
-    with pytest.raises(ValueError, match="No metapaths could be scored"):
-        query_metapath_z(
-            hetmat.gene_ids,
-            "GO:1",
-            metapaths=[BAD_MP],
-            hetmat=hetmat,
-        )
-
-
-def test_b_and_seed_deprecated_and_inert():
-    hetmat = _StubHetMat()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        df_plain = query_metapath_z(
-            hetmat.gene_ids, "GO:1", metapaths=[GOOD_MP, FLAT_MP], hetmat=hetmat
-        )
-        assert not any(issubclass(w.category, DeprecationWarning) for w in caught)
-
-    with pytest.warns(DeprecationWarning):
-        df_b = query_metapath_z(
-            hetmat.gene_ids, "GO:1", metapaths=[GOOD_MP, FLAT_MP], hetmat=hetmat, b=5
-        )
-    with pytest.warns(DeprecationWarning):
-        df_seed = query_metapath_z(
-            hetmat.gene_ids, "GO:1", metapaths=[GOOD_MP, FLAT_MP], hetmat=hetmat, seed=1
-        )
-    with pytest.warns(DeprecationWarning):
-        df_both = query_metapath_z(
-            hetmat.gene_ids,
-            "GO:1",
-            metapaths=[GOOD_MP, FLAT_MP],
-            hetmat=hetmat,
-            b=5,
-            seed=1,
-        )
-
-    pdt.assert_frame_equal(df_plain, df_b)
-    pdt.assert_frame_equal(df_plain, df_seed)
-    pdt.assert_frame_equal(df_plain, df_both)
-
-
-def test_planted_enrichment_yields_high_z():
-    hetmat = _StubHetMat()
-    df = query_metapath_z(
-        hetmat.gene_ids,
-        "GO:1",
-        metapaths=[GOOD_MP],
-        hetmat=hetmat,
-    )
+    assert df.iloc[0]["metapath"] == GOOD_MP
     assert df.iloc[0]["effect_size_z"] > 1.65
 
 
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+def test_zero_variance_metapath_row_is_nan_not_dropped(setup):
+    gene_ids, _, kwargs = setup
+    row = query_metapath_z(gene_ids, "GO:1", **kwargs).set_index("metapath").loc[FLAT_MP]
+    assert math.isnan(row["effect_size_z"])
+    assert math.isnan(row["p_value"])
 
 
-@pytest.mark.skipif(
-    not (DATA_DIR / "nodes").exists(), reason="requires bundled data/"
-)
-def test_query_does_not_duplicate_cached_matrices():
-    # The web app preloads CSR DWPC matrices. Requesting CSC here made HetMat
-    # keep a second, CSC copy of every queried metapath for the life of the
-    # process, doubling the app's DWPC memory.
-    from src.dwpc_direct import HetMat
+def test_duplicate_gene_ids_count_once(setup):
+    gene_ids, _, kwargs = setup
+    pdt.assert_frame_equal(query_metapath_z(gene_ids + gene_ids[:3], "GO:1", **kwargs),
+                           query_metapath_z(gene_ids, "GO:1", **kwargs))
 
-    hetmat = HetMat(data_dir=DATA_DIR)
-    genes = pd.read_csv(DATA_DIR / "nodes" / "Gene.tsv", sep="\t")
-    gene_ids = genes["identifier"].astype(int).head(20).tolist()
-    query_metapath_z(gene_ids, "GO:0006244", hetmat=hetmat, metapaths=["GpBP"])
-    assert list(hetmat._dwpc_cache) == [("GpBP", 0.5)]
-    assert hetmat._dwpc_cache_csc == {}
-    # Row sums are kept (168 KB per metapath), not a second matrix.
-    assert list(hetmat._dwpc_row_sums) == [("GpBP", 0.5)]
+
+def test_unsupported_metapath_is_skipped_not_fatal(setup):
+    gene_ids, _, kwargs = setup
+    df = query_metapath_z(gene_ids, "GO:1", metapaths=[GOOD_MP, BAD_MP], **kwargs)
+    assert df["metapath"].tolist() == [GOOD_MP]
+
+
+def test_all_metapaths_unsupported_raises_value_error(setup):
+    gene_ids, _, kwargs = setup
+    with pytest.raises(ValueError):
+        query_metapath_z(gene_ids, "GO:1", metapaths=[BAD_MP], **kwargs)
+
+
+def test_unknown_genes_raise_value_error(setup):
+    _, _, kwargs = setup
+    with pytest.raises(ValueError, match="None of the provided gene IDs"):
+        query_metapath_z([999999], "GO:1", **kwargs)
+
+
+def test_b_and_seed_deprecated_and_inert(setup):
+    gene_ids, _, kwargs = setup
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        plain = query_metapath_z(gene_ids, "GO:1", **kwargs)
+    with pytest.warns(DeprecationWarning):
+        with_b = query_metapath_z(gene_ids, "GO:1", b=5, seed=1, **kwargs)
+    pdt.assert_frame_equal(plain, with_b)
+
+
+def test_query_path_does_not_load_heavy_null_dependencies():
+    # hetnetex_md and scipy.stats (~50 MB resident) belong to the matrix-based
+    # reference only; the web query path must not import them.
+    code = ("import sys; sys.path.insert(0, '.'); import src.multi_dwpc_query; "
+            "print('hetnetex_md' in sys.modules, 'scipy.stats' in sys.modules)")
+    out = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True, check=True)
+    assert out.stdout.split()[-2:] == ["False", "False"]
