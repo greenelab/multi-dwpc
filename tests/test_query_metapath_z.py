@@ -35,8 +35,8 @@ class _StubHetMat:
         enriched[self.source_positions] += 20.0  # planted enrichment
 
         self._matrices = {
-            GOOD_MP: sparse.csc_matrix(np.column_stack([enriched, target1])),
-            FLAT_MP: sparse.csc_matrix(
+            GOOD_MP: sparse.csr_matrix(np.column_stack([enriched, target1])),
+            FLAT_MP: sparse.csr_matrix(
                 np.column_stack([np.full(n, 2.0), target1])
             ),  # zero-variance target column
         }
@@ -60,10 +60,13 @@ class _StubHetMat:
             return self._target_nodes
         raise KeyError(name)
 
-    def compute_dwpc_matrix_csc(self, metapath, damping=None):
+    def compute_dwpc_matrix(self, metapath, damping=None):
         if metapath not in self._matrices:
             raise KeyError(metapath)
         return self._matrices[metapath]
+
+    def get_dwpc_row_sums(self, metapath, damping=None):
+        return np.asarray(self.compute_dwpc_matrix(metapath, damping).sum(axis=1)).ravel()
 
 
 EXPECTED_COLUMNS = [
@@ -169,3 +172,25 @@ def test_planted_enrichment_yields_high_z():
         hetmat=hetmat,
     )
     assert df.iloc[0]["effect_size_z"] > 1.65
+
+
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+
+
+@pytest.mark.skipif(
+    not (DATA_DIR / "nodes").exists(), reason="requires bundled data/"
+)
+def test_query_does_not_duplicate_cached_matrices():
+    # The web app preloads CSR DWPC matrices. Requesting CSC here made HetMat
+    # keep a second, CSC copy of every queried metapath for the life of the
+    # process, doubling the app's DWPC memory.
+    from src.dwpc_direct import HetMat
+
+    hetmat = HetMat(data_dir=DATA_DIR)
+    genes = pd.read_csv(DATA_DIR / "nodes" / "Gene.tsv", sep="\t")
+    gene_ids = genes["identifier"].astype(int).head(20).tolist()
+    query_metapath_z(gene_ids, "GO:0006244", hetmat=hetmat, metapaths=["GpBP"])
+    assert list(hetmat._dwpc_cache) == [("GpBP", 0.5)]
+    assert hetmat._dwpc_cache_csc == {}
+    # Row sums are kept (168 KB per metapath), not a second matrix.
+    assert list(hetmat._dwpc_row_sums) == [("GpBP", 0.5)]
