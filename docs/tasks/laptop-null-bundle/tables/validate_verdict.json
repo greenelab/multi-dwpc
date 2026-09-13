@@ -1,0 +1,11 @@
+{
+  "rows": 147680,
+  "metapaths": 52,
+  "targets": 496,
+  "strata_mismatches": 0,
+  "max_z_rel_diff": 7.132604105581142e-10,
+  "nan_disagreements": 23,
+  "merges_equal_all": true,
+  "shuffled_control_median_abs_dz": 1.460947507597567,
+  "pass": true
+}

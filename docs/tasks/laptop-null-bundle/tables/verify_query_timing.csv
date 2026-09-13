@@ -1,0 +1,6 @@
+step,genes,seconds,metapaths_scored
+load bundle + QueryDwpc,0,0.2172549170209095,
+worked example query (first),18,1.2933101669768803,52.0
+worked example query (repeat),18,0.31576699996367097,52.0
+random 200 query (first),200,1.6667746669845656,52.0
+random 200 query (repeat),200,1.668710958037991,52.0
