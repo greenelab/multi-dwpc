@@ -31,6 +31,16 @@ def test_zero_row_gene_has_zero_capacity_for_any_target():
         assert leave_target_out_capacity(m, t)[0] == 0.0
 
 
+def test_precomputed_target_column_gives_same_capacity():
+    m = _matrix().tocsr()
+    for t in range(3):
+        col = np.asarray(m[:, t].todense()).ravel()
+        np.testing.assert_array_equal(
+            leave_target_out_capacity(m, t, target_col=col),
+            leave_target_out_capacity(m, t),
+        )
+
+
 class _StubHetMat:
     def __init__(self):
         self.calls = []

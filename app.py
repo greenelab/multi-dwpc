@@ -15,13 +15,13 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from src.dwpc_direct import HetMat
 from src.multi_dwpc_query import (
     DEFAULT_PATH_Z_MIN,
-    discover_source_target_metapaths,
     query_intermediates_and_paths,
     query_metapath_z,
 )
+from src.null_bundle import BundleMismatchError, NullBundle
+from src.query_dwpc import QueryDwpc
 from src.path_enumeration import NODE_TYPE_NAMES, load_node_names
 
 TYPE_COLORS = {
@@ -37,6 +37,7 @@ TYPE_COLORS = {
 
 REPO_ROOT = Path(__file__).resolve().parent
 DATA_DIR = REPO_ROOT / "data"
+NULL_BUNDLE_DIR = DATA_DIR / "null_bundle"
 SAMPLE_SIZE = 20
 SAMPLE_SEED = 7
 
@@ -50,13 +51,13 @@ EXAMPLE_BP_ID = "GO:0006244"
 EXAMPLE_BP_NAME = "pyrimidine nucleotide catabolic process"
 
 
-@st.cache_resource(show_spinner="Preloading DWPC matrices (first launch only)...")
-def get_hetmat() -> HetMat:
-    hetmat = HetMat(data_dir=DATA_DIR)
-    # Preload all G -> BP matrices so first query skips disk I/O.
-    for mp in discover_source_target_metapaths(hetmat, "G", "BP"):
-        hetmat.compute_dwpc_matrix(mp)
-    return hetmat
+@st.cache_resource(show_spinner="Loading the null bundle (first launch only)...")
+def get_query_resources() -> tuple[NullBundle, QueryDwpc]:
+    """Precomputed stratum summaries plus on-the-fly DWPC from edge files.
+
+    Replaces preloading every G -> BP DWPC matrix (33.6 GB).
+    """
+    return NullBundle(NULL_BUNDLE_DIR, DATA_DIR), QueryDwpc(DATA_DIR)
 
 
 @st.cache_data
@@ -100,7 +101,7 @@ def parse_gene_input(raw: str) -> list[int]:
             out.append(int(t))
         elif t in symbol_to_entrez:
             out.append(symbol_to_entrez[t])
-    return out
+    return list(dict.fromkeys(out))  # a gene set: repeated symbols or IDs count once
 
 
 def _qualified_to_name(qid, name_maps: dict[str, dict[str, str]]) -> str:
@@ -459,9 +460,13 @@ if run:
     if not gene_ids:
         st.error("No valid gene symbols or Entrez IDs parsed from input.")
         st.stop()
-    hetmat = get_hetmat()
+    try:
+        bundle, query_dwpc = get_query_resources()
+    except BundleMismatchError as exc:
+        st.error(str(exc))
+        st.stop()
     with st.spinner(f"Computing metapath z for {len(gene_ids)} genes (analytical null)"):
-        z_df = query_metapath_z(gene_ids, target_id, hetmat=hetmat)
+        z_df = query_metapath_z(gene_ids, target_id, bundle=bundle, query_dwpc=query_dwpc)
     st.session_state["z_df"] = z_df
     st.session_state["gene_ids"] = gene_ids
     st.session_state["target_id"] = target_id
@@ -488,13 +493,11 @@ def _load_drilldown(gene_ids, target_id, metapath):
     key = (tuple(gene_ids), target_id, metapath)
     cache = st.session_state.setdefault("_drilldown_cache", {})
     if key not in cache:
-        hetmat = get_hetmat()
         cache[key] = query_intermediates_and_paths(
             gene_ids=gene_ids,
             target_id=target_id,
             metapath=metapath,
             repo_root=REPO_ROOT,
-            hetmat=hetmat,
             path_top_k=DRILLDOWN_PATH_TOP_K,
             path_z_min=DEFAULT_PATH_Z_MIN,
         )

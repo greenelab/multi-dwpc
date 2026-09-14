@@ -27,15 +27,20 @@ class _StubHetMat:
     """
 
     def __init__(self, dense_matrix: np.ndarray, raw_mean: float = RAW_MEAN):
-        self._matrix = sparse.csc_matrix(dense_matrix)
+        self._matrix = sparse.csr_matrix(dense_matrix)
         self.metapath_stats = pd.DataFrame(
             {"metapath": [METAPATH], "dwpc_raw_mean": [raw_mean]}
         )
         self.calls = []
+        self.row_sum_calls = []
 
-    def compute_dwpc_matrix_csc(self, metapath, damping=DEFAULT_DAMPING):
+    def compute_dwpc_matrix(self, metapath, damping=DEFAULT_DAMPING):
         self.calls.append(metapath)
         return self._matrix
+
+    def get_dwpc_row_sums(self, metapath, damping=DEFAULT_DAMPING):
+        self.row_sum_calls.append(metapath)
+        return np.asarray(self._matrix.sum(axis=1)).ravel()
 
 
 def test_one_matrix_load_per_evaluation():
@@ -46,6 +51,58 @@ def test_one_matrix_load_per_evaluation():
     source_idx = np.arange(5)
     analytical_gene_set_z(hetmat, METAPATH, source_idx, target_pos=0, min_stratum_size=10)
     assert hetmat.calls == [METAPATH]
+
+
+class _SliceCountingCSR(sparse.csr_matrix):
+    """CSR matrix that counts column-slice requests made on it."""
+
+    column_slices = 0
+
+    def __getitem__(self, key):
+        if isinstance(key, tuple) and isinstance(key[0], slice):
+            type(self).column_slices += 1
+        return super().__getitem__(key)
+
+
+def test_target_column_never_sliced_from_csr():
+    # A CSR column slice scans every stored entry (67 ms on the largest G->BP
+    # matrix). The adapter reads the target column by per-row binary search
+    # instead, once, and reuses it for both the scores and the capacity key.
+    rng = np.random.default_rng(5)
+    dense = rng.exponential(scale=1.0, size=(60, 3))
+    hetmat = _StubHetMat(dense)
+    hetmat._matrix = _SliceCountingCSR(dense)
+    _SliceCountingCSR.column_slices = 0
+    analytical_gene_set_z(hetmat, METAPATH, np.arange(5), target_pos=1, min_stratum_size=10)
+    assert _SliceCountingCSR.column_slices == 0
+
+
+class _SumCountingCSR(sparse.csr_matrix):
+    """CSR matrix that counts full-matrix ``sum`` calls made on it."""
+
+    sums = 0
+
+    def sum(self, *args, **kwargs):
+        type(self).sums += 1
+        return super().sum(*args, **kwargs)
+
+
+def test_row_sums_come_from_hetmat_cache_not_the_matrix():
+    # Row sums scan every stored entry (26 ms on the largest G->BP matrix)
+    # and do not depend on the target, so the adapter takes them from the
+    # hetmat's per-metapath cache instead of summing the matrix each query.
+    rng = np.random.default_rng(6)
+    dense = rng.exponential(scale=1.0, size=(60, 3))
+    hetmat = _StubHetMat(dense)
+    row_sums = np.asarray(hetmat._matrix.sum(axis=1)).ravel()
+    hetmat._matrix = _SumCountingCSR(dense)
+    hetmat.get_dwpc_row_sums = lambda metapath, damping=DEFAULT_DAMPING: (
+        hetmat.row_sum_calls.append(metapath) or row_sums
+    )
+    _SumCountingCSR.sums = 0
+    analytical_gene_set_z(hetmat, METAPATH, np.arange(5), target_pos=1, min_stratum_size=10)
+    assert _SumCountingCSR.sums == 0
+    assert hetmat.row_sum_calls == [METAPATH]
 
 
 def test_planted_enrichment_yields_high_z():

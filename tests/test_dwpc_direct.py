@@ -146,5 +146,49 @@ class CreateNodeIndexMappingTests(unittest.TestCase):
         self.assertEqual(list(out["target_idx"]), [1, 0])
 
 
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+
+
+@unittest.skipUnless((DATA_DIR / "nodes").exists(), "requires bundled data/")
+class DwpcRowSumsTests(unittest.TestCase):
+    """``HetMat.get_dwpc_row_sums``: target-independent row sums, computed once."""
+
+    def setUp(self):
+        import numpy as np
+        from scipy import sparse
+
+        self.np = np
+        self.hetmat = HetMat(data_dir=DATA_DIR, use_disk_cache=False)
+        rng = np.random.default_rng(0)
+        self.matrix = sparse.random(40, 7, density=0.3, format="csr", random_state=rng)
+        # Seed the matrix cache so no DWPC is computed or read from disk.
+        self.hetmat._dwpc_cache[("GpBP", self.hetmat.damping)] = self.matrix
+
+    def test_matches_matrix_row_sums_bit_for_bit(self):
+        got = self.hetmat.get_dwpc_row_sums("GpBP")
+        want = self.np.asarray(self.matrix.sum(axis=1)).ravel()
+        self.assertEqual(got.dtype, want.dtype)
+        self.np.testing.assert_array_equal(got, want)
+
+    def test_computed_once_per_metapath(self):
+        first = self.hetmat.get_dwpc_row_sums("GpBP")
+        self.assertIs(self.hetmat.get_dwpc_row_sums("GpBP"), first)
+        self.assertIs(self.hetmat.get_dwpc_row_sums("GpBP", damping=self.hetmat.damping), first)
+
+    def test_does_not_build_a_csc_copy(self):
+        self.hetmat.get_dwpc_row_sums("GpBP")
+        self.assertEqual(self.hetmat._dwpc_cache_csc, {})
+
+    def test_cleared_with_the_matrix(self):
+        first = self.hetmat.get_dwpc_row_sums("GpBP")
+        self.hetmat.clear_metapath_from_memory("GpBP")
+        self.hetmat._dwpc_cache[("GpBP", self.hetmat.damping)] = self.matrix
+        self.assertIsNot(self.hetmat.get_dwpc_row_sums("GpBP"), first)
+        second = self.hetmat.get_dwpc_row_sums("GpBP")
+        self.hetmat.clear_memory_cache()
+        self.hetmat._dwpc_cache[("GpBP", self.hetmat.damping)] = self.matrix
+        self.assertIsNot(self.hetmat.get_dwpc_row_sums("GpBP"), second)
+
+
 if __name__ == "__main__":
     unittest.main()
