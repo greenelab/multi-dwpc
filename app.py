@@ -101,7 +101,7 @@ def parse_gene_input(raw: str) -> list[int]:
             out.append(int(t))
         elif t in symbol_to_entrez:
             out.append(symbol_to_entrez[t])
-    return out
+    return list(dict.fromkeys(out))  # a gene set: repeated symbols or IDs count once
 
 
 def _qualified_to_name(qid, name_maps: dict[str, dict[str, str]]) -> str:

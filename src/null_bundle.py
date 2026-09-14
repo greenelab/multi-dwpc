@@ -26,12 +26,18 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
+from src.dwpc_direct import DEFAULT_DAMPING
 from src.summary_null import DWPC_ZERO_TOL, StratumTable
 
 SCHEMA_VERSION = 1
 MIN_STRATUM_SIZE = 50
+BUNDLE_FILES = ["manifest.json", "row_sums.parquet", "strata.parquet"]
 STRATA_COLUMNS = ["capacity_min", "capacity_max", "n_genes", "score_mean", "score_centered_ss"]
-REGENERATE_HINT = "Regenerate it on Alpine with hpc/submit_null_bundle.sh."
+REGENERATE_HINT = ("Download it as described in README.md (Run the web app), or rebuild it "
+                   "with hpc/submit_null_bundle.sh.")
+# Settings the query code assumes; a bundle built with other values is refused.
+EXPECTED_SETTINGS = {"schema_version": SCHEMA_VERSION, "damping": DEFAULT_DAMPING,
+                     "min_stratum_size": MIN_STRATUM_SIZE, "dwpc_zero_tol": DWPC_ZERO_TOL}
 
 
 class BundleMismatchError(RuntimeError):
@@ -55,8 +61,25 @@ def data_files(data_dir: Path) -> list[Path]:
     return [f.relative_to(data_dir) for f in files]
 
 
+def data_file_hashes(data_dir: Path) -> dict[str, str]:
+    """SHA-256 of every data file the query path reads, keyed by relative path."""
+    return {str(f): sha256(Path(data_dir) / f) for f in data_files(data_dir)}
+
+
+def fingerprint(hashes: dict[str, str]) -> str:
+    """Short identifier of a set of data files, for namespacing caches."""
+    joined = "\n".join(f"{name} {digest}" for name, digest in sorted(hashes.items()))
+    return hashlib.sha256(joined.encode()).hexdigest()[:16]
+
+
+def data_fingerprint(data_dir: Path) -> str:
+    """Fingerprint of ``data_dir``: DWPC caches from other data never share it."""
+    return fingerprint(data_file_hashes(data_dir))
+
+
 def write_part(parts_dir: Path, index: int, metapath: str, strata: dict[str, np.ndarray],
-               row_sums: np.ndarray, raw_mean: float, matrix_sha256: str) -> None:
+               row_sums: np.ndarray, raw_mean: float, matrix_sha256: str,
+               data_fingerprint: str) -> None:
     """Write one metapath's strata rows, row sums and metadata."""
     parts_dir = Path(parts_dir)
     parts_dir.mkdir(parents=True, exist_ok=True)
@@ -78,7 +101,7 @@ def write_part(parts_dir: Path, index: int, metapath: str, strata: dict[str, np.
         "row_sum": pa.array(row_sums, pa.float64()),
     }), parts_dir / f"row_sums_{index:02d}.parquet")
     meta = {"metapath": metapath, "raw_mean": float(raw_mean), "matrix_sha256": matrix_sha256,
-            "n_strata_rows": n_rows}
+            "n_strata_rows": n_rows, "data_fingerprint": data_fingerprint}
     (parts_dir / f"part_{index:02d}.json").write_text(json.dumps(meta, indent=2))
 
 
@@ -90,6 +113,13 @@ def finalize(parts_dir: Path, bundle_dir: Path, data_dir: Path, *, damping: floa
     if expected_parts is not None and len(indices) != expected_parts:
         raise ValueError(f"{parts_dir} has {len(indices)} parts, expected {expected_parts}")
     metas = [json.loads((parts_dir / f"part_{i:02d}.json").read_text()) for i in indices]
+    hashes = data_file_hashes(data_dir)
+    stale = [m["metapath"] for m in metas if m.get("data_fingerprint") != fingerprint(hashes)]
+    if stale:
+        raise ValueError(
+            f"Parts for {', '.join(stale[:5])}{' ...' if len(stale) > 5 else ''} were built from "
+            f"different data than {data_dir}; rebuild them."
+        )
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
     strata = pa.concat_tables(
@@ -121,7 +151,7 @@ def finalize(parts_dir: Path, bundle_dir: Path, data_dir: Path, *, damping: floa
         "dwpc_zero_tol": DWPC_ZERO_TOL,
         "n_strata_rows": strata.num_rows,
         "metapaths": metas,
-        "data_files": {str(f): sha256(data_dir / f) for f in data_files(data_dir)},
+        "data_files": hashes,
     }
     (bundle_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return manifest
@@ -133,10 +163,21 @@ class NullBundle:
     def __init__(self, bundle_dir: Path, data_dir: Path):
         self.bundle_dir = Path(bundle_dir)
         self.data_dir = Path(data_dir)
-        manifest_path = self.bundle_dir / "manifest.json"
-        if not manifest_path.exists():
+        missing = [name for name in BUNDLE_FILES if not (self.bundle_dir / name).exists()]
+        if len(missing) == len(BUNDLE_FILES):
             raise BundleMismatchError(f"No null bundle at {self.bundle_dir}. {REGENERATE_HINT}")
-        self.manifest = json.loads(manifest_path.read_text())
+        if missing:
+            raise BundleMismatchError(
+                f"Null bundle {self.bundle_dir} is incomplete (missing {', '.join(missing)}). {REGENERATE_HINT}"
+            )
+        self.manifest = json.loads((self.bundle_dir / "manifest.json").read_text())
+        incompatible = [f"{key}={self.manifest.get(key)!r} (expected {value!r})"
+                        for key, value in EXPECTED_SETTINGS.items() if self.manifest.get(key) != value]
+        if incompatible:
+            raise BundleMismatchError(
+                f"Null bundle {self.bundle_dir} was built with incompatible settings: "
+                f"{'; '.join(incompatible)}. {REGENERATE_HINT}"
+            )
         mismatched = [
             name for name, digest in self.manifest["data_files"].items()
             if not (Path(data_dir) / name).exists() or sha256(Path(data_dir) / name) != digest

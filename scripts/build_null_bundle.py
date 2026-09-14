@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.dwpc_direct import DEFAULT_DAMPING, HetMat, get_dwpc_raw_mean, transform_dwpc  # noqa: E402
 from src.multi_dwpc_query import discover_source_target_metapaths  # noqa: E402
-from src.null_bundle import MIN_STRATUM_SIZE, sha256, write_part  # noqa: E402
+from src.null_bundle import MIN_STRATUM_SIZE, data_fingerprint, sha256, write_part  # noqa: E402
 from src.summary_null import DWPC_ZERO_TOL, build_strata  # noqa: E402
 
 
@@ -34,11 +34,16 @@ def main() -> None:
     parser.add_argument("--parts-dir", type=Path)
     parser.add_argument("--data-dir", type=Path, default=REPO_ROOT / "data")
     parser.add_argument("--cache-dir", type=Path, default=None,
-                        help="DWPC matrix cache (default: <data-dir>/dwpc_cache)")
+                        help="DWPC matrix cache root; matrices go under <cache-dir>/<data fingerprint>/ "
+                             "(default: <data-dir>/dwpc_cache)")
     parser.add_argument("--list-metapaths", action="store_true")
     args = parser.parse_args()
 
-    hetmat = HetMat(data_dir=args.data_dir, cache_dir=args.cache_dir)
+    fingerprint = data_fingerprint(args.data_dir)
+    # Namespace a shared cache by the data it was computed from, so matrices
+    # left over from other data are never read into this bundle.
+    cache_dir = args.cache_dir / fingerprint if args.cache_dir else None
+    hetmat = HetMat(data_dir=args.data_dir, cache_dir=cache_dir)
     metapaths = discover_source_target_metapaths(hetmat, "G", "BP")
     if args.list_metapaths:
         print("\n".join(metapaths))
@@ -77,7 +82,7 @@ def main() -> None:
 
     strata = {name: np.concatenate(values) for name, values in rows.items()}
     write_part(args.parts_dir, args.index, metapath, strata, row_sums, raw_mean,
-               sha256(hetmat._get_cache_path(metapath, DEFAULT_DAMPING)))
+               sha256(hetmat._get_cache_path(metapath, DEFAULT_DAMPING)), fingerprint)
     print(f"[{args.index}] {metapath}: {strata['stratum'].size:,} strata rows over {n_targets} targets "
           f"in {time.perf_counter() - start:.0f}s", flush=True)
 

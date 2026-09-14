@@ -205,7 +205,8 @@ def query_intermediates_and_paths(
     edge_loader = EdgeLoader(repo_root / "data" / "edges")
 
     gene_idx_map = _gene_index_map(repo_root / "data")
-    valid_gene_ids = [int(g) for g in gene_ids if int(g) in gene_idx_map]
+    # A gene set: a repeated ID is enumerated once, as in query_metapath_z.
+    valid_gene_ids = list(dict.fromkeys(int(g) for g in gene_ids if int(g) in gene_idx_map))
     target_pos = _target_position(repo_root / "data", target_type, target_id)
 
     # Optional manual pool-score diagnostic: re-enumerate paths per gene to

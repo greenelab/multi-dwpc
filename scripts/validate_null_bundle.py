@@ -31,7 +31,7 @@ from src.analytical_null import analytical_gene_set_z  # noqa: E402
 from src.dwpc_direct import DEFAULT_DAMPING, HetMat, transform_dwpc  # noqa: E402
 from src.hurdle_adaptive_bins import hurdle_adaptive_bins  # noqa: E402
 from src.multi_dwpc_query import _target_position  # noqa: E402
-from src.null_bundle import MIN_STRATUM_SIZE, NullBundle  # noqa: E402
+from src.null_bundle import MIN_STRATUM_SIZE, NullBundle, data_fingerprint  # noqa: E402
 from src.query_dwpc import QueryDwpc  # noqa: E402
 from src.sparse_column import dense_column  # noqa: E402
 from src.summary_null import DWPC_ZERO_TOL, assign_strata, query_capacity, summary_gene_set_z  # noqa: E402
@@ -67,7 +67,8 @@ def main() -> None:
 
     bundle = NullBundle(args.bundle_dir, args.data_dir)
     query_dwpc = QueryDwpc(args.data_dir)
-    hetmat = HetMat(data_dir=args.data_dir, cache_dir=args.cache_dir, write_disk_cache=False)
+    cache_dir = args.cache_dir / data_fingerprint(args.data_dir) if args.cache_dir else None  # as the build does
+    hetmat = HetMat(data_dir=args.data_dir, cache_dir=cache_dir, write_disk_cache=False)
     metapath = bundle.metapaths[args.index]
     start = time.perf_counter()
 

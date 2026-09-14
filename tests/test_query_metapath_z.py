@@ -173,3 +173,18 @@ def test_query_path_does_not_load_heavy_null_dependencies():
             "print('hetnetex_md' in sys.modules, 'scipy.stats' in sys.modules)")
     out = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True, check=True)
     assert out.stdout.split()[-2:] == ["False", "False"]
+
+
+@pytest.mark.skipif(not (REPO_ROOT / "data" / "edges").exists(), reason="requires bundled data/")
+def test_drilldown_counts_duplicate_gene_ids_once():
+    from src.multi_dwpc_query import query_intermediates_and_paths
+
+    genes = pd.read_csv(REPO_ROOT / "data" / "nodes" / "Gene.tsv", sep="\t")
+    symbols = ["DUT", "UNG", "DPYD", "DPYS", "TYMP", "UPP1"]
+    gene_ids = genes.loc[genes["name"].isin(symbols), "identifier"].astype(int).tolist()
+    kwargs = dict(target_id="GO:0006244", metapath="GpBPpGpBP", repo_root=REPO_ROOT, path_top_k=20)
+    unique = query_intermediates_and_paths(gene_ids, **kwargs)
+    duplicated = query_intermediates_and_paths(gene_ids + gene_ids[:3], **kwargs)
+    pdt.assert_frame_equal(duplicated[0], unique[0])
+    pdt.assert_frame_equal(duplicated[1], unique[1])
+    assert duplicated[2]["n_genes_in_hetmat"] == unique[2]["n_genes_in_hetmat"] == len(gene_ids)

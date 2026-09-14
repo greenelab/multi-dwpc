@@ -124,3 +124,22 @@
   pre-squash commit; the build and read code are unchanged in the squashed
   commits (`cb2adcd`, `2130fe1`), and the manifest was left as built so its
   checksum matches the upload.
+
+## review
+
+- **2026-09-14**: Copilot review of PR #11, four findings, all verified and
+  fixed in one follow-up commit (no change to results; the published bundle
+  still loads):
+  - The build could read DWPC matrices cached from other data: the cache is
+    looked up by file name only, while finalize hashes the current `data/`.
+    `--cache-dir` is now namespaced by a fingerprint of the data-file hashes,
+    each part records that fingerprint, and finalize refuses parts built from
+    other data.
+  - `NullBundle` did not check the manifest's `schema_version`, `damping`,
+    `min_stratum_size` or `dwpc_zero_tol`; it now refuses a bundle whose
+    settings differ from the query code's.
+  - A bundle missing `strata.parquet` or `row_sums.parquet` raised an uncaught
+    `FileNotFoundError`; it now raises `BundleMismatchError`, which the app
+    shows. The error now points to the Zenodo download as well as the rebuild.
+  - The drill-down (`query_intermediates_and_paths`) enumerated a repeated gene
+    ID twice; gene IDs are de-duplicated there and in the app's input parser.

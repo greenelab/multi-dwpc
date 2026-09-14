@@ -19,7 +19,8 @@ DATA_DIR=$PWD/data bash hpc/submit_null_bundle.sh
   load or compute the DWPC matrix into `CACHE_DIR`, then summarise every target
   column into strata. Up to ~7 min and ~17 GB each.
 - A finalize job (`scripts/finalize_null_bundle.py`) runs after all tasks
-  succeed and writes `$DATA_DIR/null_bundle/`: `strata.parquet` (~98M rows,
+  succeed, checks every part was built from the current `data/` (same
+  fingerprint), and writes `$DATA_DIR/null_bundle/`: `strata.parquet` (~98M rows,
   3.1 GB), `row_sums.parquet` and `manifest.json` (settings and SHA-256 of the
   data files).
 
@@ -27,7 +28,7 @@ DATA_DIR=$PWD/data bash hpc/submit_null_bundle.sh
 |---|---|
 | `DATA_DIR` | `<repo>/data` |
 | `WORK_DIR` | `/scratch/alpine/$USER/multi-dwpc/null_bundle` |
-| `CACHE_DIR` | `$WORK_DIR/dwpc_cache` (~22 GB of DWPC matrices; scratch is purged periodically) |
+| `CACHE_DIR` | `$WORK_DIR/dwpc_cache`; matrices go under `$CACHE_DIR/<data fingerprint>/` so a cache from other data is never reused (~22 GB; scratch is purged periodically) |
 | `PARTS_DIR` | `$WORK_DIR/parts` |
 | `BUNDLE_DIR` | `$DATA_DIR/null_bundle` |
 
