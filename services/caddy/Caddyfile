@@ -1,0 +1,5 @@
+# caddy is serving from the hostname multi-dwpc.cu-dbmi.dev
+# proxy all requests to the streamlit app at streamlit:8501
+multi-dwpc.cu-dbmi.dev {
+    reverse_proxy streamlit:8501
+}

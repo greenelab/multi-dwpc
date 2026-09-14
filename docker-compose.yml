@@ -1,0 +1,27 @@
+services:
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: multi-dwpc:latest
+    container_name: multi-dwpc-streamlit
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data/:/app/data/
+
+  caddy:
+    image: caddy:2.6.4-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./services/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - streamlit
+
+volumes:
+  caddy_data:
+  caddy_config:
