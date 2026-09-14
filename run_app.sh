@@ -4,8 +4,9 @@
 
 IMAGE_NAME=multi-dwpc:latest
 
-docker build -t ${IMAGE_NAME} . && \
-docker run --rm -it \
+docker build -t "${IMAGE_NAME}" . && \
+docker run --rm -it --name multi-dwpc-streamlit \
 	-p 8501:8501 \
 	-v ./data/:/app/data/ \
-	${IMAGE_NAME}
+	"${IMAGE_NAME}" \
+	${@}

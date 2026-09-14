@@ -14,4 +14,4 @@ WORKDIR /app
 COPY . .
 
 # run app.py as a streamlit app
-CMD ["uv", "run", "app.py", "--host", "0.0.0", "--port", "8501"]
+CMD ["streamlit", "run", "app.py"]
