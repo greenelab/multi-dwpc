@@ -32,9 +32,15 @@
 # - Full control over damping parameter
 
 # %%
+import os
 import sys
 import time
 from pathlib import Path
+
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 import pandas as pd
 
@@ -163,8 +169,11 @@ def main():
     # DWPC parameters (0.5 matches API, arcsinh transformation applied)
     DAMPING = 0.5
 
-    # Parallel processing
-    N_WORKERS = 4  # Number of parallel workers for metapath computation
+    # Parallel processing.
+    # The worker pool can be unstable on some Debian + Python 3.13 VMs when
+    # NumPy/OpenBLAS is forked. Keep the default serialized to avoid crashes on
+    # memory-constrained hosts.
+    N_WORKERS = 1
 
     # Create output directories
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

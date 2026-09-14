@@ -27,7 +27,9 @@ References:
 """
 
 import json
+import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import get_context
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -680,24 +682,47 @@ class HetMat:
 
         # Use a top-level worker so each subprocess creates its own hetmatpy
         # instance instead of attempting to pickle self._hetmatpy.
+        # Some Debian/Python 3.13 + NumPy/BLAS combinations crash when forked
+        # workers are spawned with the default process context, so prefer the
+        # safer "spawn" context and fall back to serial execution if the pool
+        # dies unexpectedly.
         args_list = [(str(self.data_dir), mp, damping) for mp in to_compute]
 
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
-            futures = {
-                executor.submit(_compute_dwpc_matrix_worker, args): args[1]
-                for args in args_list
-            }
+        try:
+            with ProcessPoolExecutor(
+                max_workers=n_workers,
+                mp_context=get_context("spawn"),
+            ) as executor:
+                futures = {
+                    executor.submit(_compute_dwpc_matrix_worker, args): args[1]
+                    for args in args_list
+                }
 
-            iterator = as_completed(futures)
+                iterator = as_completed(futures)
+                if show_progress:
+                    iterator = tqdm(iterator, total=len(to_compute), desc="Computing DWPC matrices")
+
+                for future in iterator:
+                    mp, matrix = future.result()
+                    cache_key = (mp, damping)
+                    self._save_to_disk(mp, damping, matrix)
+                    if cache_in_memory:
+                        self._dwpc_cache[cache_key] = matrix
+        except Exception:
+            if n_workers > 1:
+                print(
+                    "Parallel DWPC precomputation failed; retrying serially "
+                    "to avoid worker-process crashes on this host."
+                )
             if show_progress:
-                iterator = tqdm(iterator, total=len(to_compute), desc="Computing DWPC matrices")
+                iterator = tqdm(to_compute, total=len(to_compute), desc="Computing DWPC matrices")
+            else:
+                iterator = to_compute
 
-            for future in iterator:
-                mp, matrix = future.result()
-                cache_key = (mp, damping)
-                self._save_to_disk(mp, damping, matrix)
+            for mp in iterator:
+                matrix = self.compute_dwpc_matrix(mp, damping=damping)
                 if cache_in_memory:
-                    self._dwpc_cache[cache_key] = matrix
+                    self._dwpc_cache[(mp, damping)] = matrix
 
     def get_dwpc_for_pairs(
         self,

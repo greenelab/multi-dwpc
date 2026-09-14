@@ -37,6 +37,11 @@ import sys
 import time
 from pathlib import Path
 
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -73,8 +78,11 @@ INTERMEDIATE_DIR = repo_root / "output" / "intermediate"
 # DWPC parameters (0.5 matches API, arcsinh transformation applied)
 DAMPING = 0.5
 
-# Parallel processing
-N_WORKERS = 4  # Number of parallel workers for metapath computation
+# Parallel processing.
+# The worker pool can be unstable on some Debian + Python 3.13 VMs when NumPy/
+# OpenBLAS is forked, so prefer a conservative default and increase only if
+# the host remains stable.
+N_WORKERS = 1
 
 # Create output directories
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
