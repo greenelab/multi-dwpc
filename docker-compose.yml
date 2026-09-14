@@ -1,5 +1,6 @@
 services:
   streamlit:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
@@ -11,6 +12,7 @@ services:
       - ./data/:/app/data/
 
   caddy:
+    restart: unless-stopped
     image: caddy:2.6.4-alpine
     ports:
       - "80:80"
