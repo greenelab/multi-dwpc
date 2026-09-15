@@ -15,12 +15,27 @@ import numpy as np
 from scipy import sparse
 
 from src.dwpc_direct import DEFAULT_DAMPING
+from src.sparse_column import dense_column
 
 
-def leave_target_out_capacity(matrix_csc: sparse.csc_matrix, target_position: int) -> np.ndarray:
-    """Row sums of the raw DWPC matrix minus the target column's entries."""
-    row_sums = np.asarray(matrix_csc.sum(axis=1)).ravel()
-    target_col = np.asarray(matrix_csc[:, target_position].todense()).ravel()
+def leave_target_out_capacity(
+    matrix: sparse.spmatrix,
+    target_position: int,
+    target_col: np.ndarray | None = None,
+    row_sums: np.ndarray | None = None,
+) -> np.ndarray:
+    """Row sums of the raw DWPC matrix minus the target column's entries.
+
+    Accepts any scipy sparse format (CSR from the web app's cache, CSC from
+    ``CapacityProvider``). Pass ``target_col`` (the dense raw target column)
+    when the caller already has it, to avoid reading the column twice, and
+    ``row_sums`` (e.g. from ``HetMat.get_dwpc_row_sums``) to avoid rescanning
+    the matrix.
+    """
+    if row_sums is None:
+        row_sums = np.asarray(matrix.sum(axis=1)).ravel()
+    if target_col is None:
+        target_col = dense_column(matrix, target_position)
     return row_sums - target_col
 
 

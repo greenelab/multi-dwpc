@@ -38,14 +38,23 @@ def pools_from_bins(
         `real_row_idx` removed. `counts[b]` is how many real genes fall in
         bin `b`.
     """
+    bin_of_row = np.asarray(bin_of_row)
+    real_row_idx = np.asarray(real_row_idx)
     real_bins = bin_of_row[real_row_idx]
 
-    pools: list[np.ndarray] = []
-    counts: list[int] = []
-    for b in range(n_bins):
-        candidate_rows = np.flatnonzero(bin_of_row == b)
-        candidate_rows = candidate_rows[~np.isin(candidate_rows, real_row_idx)]
-        pools.append(candidate_rows)
-        counts.append(int((real_bins == b).sum()))
+    # One stable sort groups rows by bin while keeping ascending row order
+    # within each bin, so every pool is sliced out of a single array instead
+    # of rescanning the whole universe once per bin.
+    is_real = np.zeros(bin_of_row.shape[0], dtype=bool)
+    is_real[real_row_idx[real_row_idx >= 0]] = True
+    candidates = np.flatnonzero(~is_real)
+    candidate_bins = bin_of_row[candidates]
+    order = np.argsort(candidate_bins, kind="stable")
+    candidates = candidates[order]
+    bin_edges = np.searchsorted(candidate_bins[order], np.arange(n_bins + 1), side="left")
+    pools = [candidates[bin_edges[b]:bin_edges[b + 1]] for b in range(n_bins)]
+
+    real_edges = np.searchsorted(np.sort(real_bins), np.arange(n_bins + 1), side="left")
+    counts = np.diff(real_edges).tolist()
 
     return pools, counts

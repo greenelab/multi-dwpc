@@ -45,3 +45,28 @@ def test_oversized_k_raises():
     scores = np.array([1.0, 2.0, 3.0])
     with pytest.raises(ValueError, match="exceeds pool"):
         analytical_null(scores, [np.arange(3)], [5], observed=1.0)
+
+
+def test_module_does_not_import_scipy_stats():
+    # scipy.stats costs ~50 MB resident to import; the web app loads this
+    # module at startup and only needs the normal survival function.
+    import ast
+
+    source = (Path(__file__).resolve().parents[1] / "src" / "analytical_null.py").read_text()
+    imported = set()
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+            imported.update(f"{node.module}.{a.name}" for a in node.names)
+        elif isinstance(node, ast.Import):
+            imported.update(a.name for a in node.names)
+    assert "scipy.stats" not in imported
+
+
+@pytest.mark.parametrize("delta", [-3.0, 0.0, 0.5, 1.65, 5.0, 20.0, 35.0])
+def test_p_matches_normal_survival_function(delta):
+    from scipy.stats import norm
+
+    scores = np.linspace(0.0, 1.0, 400)
+    result = analytical_null(scores, [np.arange(400)], [40], observed=0.5 + delta * 0.0137)
+    assert result.p == pytest.approx(float(norm.sf(result.z)), rel=1e-12, abs=1e-300)

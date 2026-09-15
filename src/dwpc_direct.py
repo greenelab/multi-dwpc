@@ -495,6 +495,9 @@ class HetMat:
         self._node_dfs: Dict[str, pd.DataFrame] = {}
         self._dwpc_cache: Dict[Tuple[str, float], sparse.csr_matrix] = {}
         self._dwpc_cache_csc: Dict[Tuple[str, float], sparse.csc_matrix] = {}
+        # Per-metapath row sums of the cached matrices (one float per source
+        # node), kept so per-query callers do not rescan every stored entry.
+        self._dwpc_row_sums: Dict[Tuple[str, float], np.ndarray] = {}
 
     def _get_cache_path(self, metapath: str, damping: float) -> Path:
         """Get the disk cache path for a DWPC matrix.
@@ -609,6 +612,27 @@ class HetMat:
             csc = matrix.tocsc()
         self._dwpc_cache_csc[cache_key] = csc
         return csc
+
+    def get_dwpc_row_sums(
+        self,
+        metapath: str,
+        damping: Optional[float] = None
+    ) -> np.ndarray:
+        """
+        Row sums of the raw DWPC matrix (one value per source node), cached.
+
+        Summing a row scans every stored entry of the matrix (26 ms for the
+        largest G->BP metapath) but the result does not depend on the target,
+        so it is computed once per metapath and reused. The cache costs one
+        float64 per source node (168 KB per Gene-source metapath) and is
+        cleared together with the matrix.
+        """
+        damping = damping if damping is not None else self.damping
+        cache_key = (metapath, damping)
+        if cache_key not in self._dwpc_row_sums:
+            matrix = self.compute_dwpc_matrix(metapath=metapath, damping=damping)
+            self._dwpc_row_sums[cache_key] = np.asarray(matrix.sum(axis=1)).ravel()
+        return self._dwpc_row_sums[cache_key]
 
     def precompute_matrices(
         self,
@@ -733,6 +757,7 @@ class HetMat:
         """Clear the in-memory cache to free RAM."""
         self._dwpc_cache.clear()
         self._dwpc_cache_csc.clear()
+        self._dwpc_row_sums.clear()
 
     def clear_metapath_from_memory(
         self,
@@ -744,6 +769,7 @@ class HetMat:
         cache_key = (metapath, damping)
         self._dwpc_cache.pop(cache_key, None)
         self._dwpc_cache_csc.pop(cache_key, None)
+        self._dwpc_row_sums.pop(cache_key, None)
 
     def clear_disk_cache(self):
         """Clear the disk cache."""
