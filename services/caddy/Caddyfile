@@ -1,5 +1,13 @@
 # caddy is serving from the hostname multi-dwpc.cu-dbmi.dev
-# proxy all requests to the streamlit app at streamlit:8501
+# serves Django's collected static files, and proxies everything else to the
+# API at streamlit-api:8000
 multi-dwpc.cu-dbmi.dev {
-    reverse_proxy streamlit:8501
+    handle_path /static/* {
+        root * /opt/static
+        file_server
+    }
+
+    handle {
+        reverse_proxy streamlit-api:8000
+    }
 }

@@ -1,29 +1,43 @@
 services:
-  streamlit:
+  # streamlit:
+  #   restart: unless-stopped
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   image: multi-dwpc:latest
+  #   container_name: multi-dwpc-streamlit
+  #   ports:
+  #     - "8501:8501"
+  #   volumes:
+  #     - ./data/:/app/data/
+
+  streamlit-api:
     restart: unless-stopped
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.api
     image: multi-dwpc:latest
-    container_name: multi-dwpc-streamlit
+    container_name: multi-dwpc-streamlit-api
+    environment:
+      - DJANGO_DEBUG=1
     ports:
-      - "8501:8501"
+      - "8500:8000"
     volumes:
       - ./data/:/app/data/
+      - django_static:/opt/static/
 
-  caddy:
+  frontend:
     restart: unless-stopped
-    image: caddy:2.6.4-alpine
+    build:
+      context: ./frontend
+    image: multi-dwpc-frontend:latest
+    container_name: multi-dwpc-frontend
+    environment:
+      - API_PROXY_TARGET=http://streamlit-api:8000
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./services/caddy/Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
+      - "5173:5173"
     depends_on:
-      - streamlit
+      - streamlit-api
 
 volumes:
-  caddy_data:
-  caddy_config:
+  django_static:

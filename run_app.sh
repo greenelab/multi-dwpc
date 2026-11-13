@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 
-# builds the image multi-dwpc:latest and runs it on port 8501
-
-IMAGE_NAME=multi-dwpc:latest
+IMAGE_NAME=multi-dwpc-streamlit:latest
 
 docker build -t "${IMAGE_NAME}" . && \
-docker run --rm -it --name multi-dwpc-streamlit \
+docker run --rm -it --name multi-dwpc-streamlit-app \
 	-p 8501:8501 \
 	-v ./data/:/app/data/ \
 	"${IMAGE_NAME}" \
