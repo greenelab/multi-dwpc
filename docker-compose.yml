@@ -15,7 +15,7 @@ services:
     restart: unless-stopped
     build:
       context: .
-      dockerfile: Dockerfile.api
+      dockerfile: api/Dockerfile
     image: multi-dwpc:latest
     container_name: multi-dwpc-streamlit-api
     environment:
