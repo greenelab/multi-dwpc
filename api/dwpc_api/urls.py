@@ -1,15 +1,9 @@
-from django.urls import path
-from rest_framework.routers import DefaultRouter
+from rest_framework.routers import SimpleRouter
 
-from .views import ApiRootView, QueryViewSet, ReferenceViewSet
+from .views import QueryViewSet, ReferenceViewSet
 
-router = DefaultRouter()
-router.include_root_view = False
-# router.include_root_view = True
+router = SimpleRouter()
 router.register("queries", QueryViewSet, basename="queries")
 router.register("reference", ReferenceViewSet, basename="reference")
 
-urlpatterns = [
-	path("", ApiRootView.as_view(), name="api-root"),
-]
-urlpatterns += router.urls
+urlpatterns = router.urls

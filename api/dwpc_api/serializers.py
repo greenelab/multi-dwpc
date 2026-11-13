@@ -2,56 +2,117 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from src.multi_dwpc_query import DEFAULT_B, DEFAULT_PATH_Z_MIN
 
-
-class BaseGeneTargetSerializer(serializers.Serializer):
-    target_id = serializers.CharField(required=False, allow_blank=False)
-    target_name = serializers.CharField(required=False, allow_blank=False)
-    gene_ids = serializers.ListField(
-        child=serializers.IntegerField(), required=False, allow_empty=False
+class QueryRequestSerializer(serializers.Serializer):
+    target_id = serializers.CharField()
+    genes_raw = serializers.CharField(
+        help_text="Gene symbols or Entrez IDs, one per line or comma-separated."
     )
-    gene_symbols = serializers.ListField(
-        child=serializers.CharField(), required=False, allow_empty=False
-    )
-    genes_raw = serializers.CharField(required=False, allow_blank=False)
-
-    def validate(self, attrs):
-        has_target = bool(attrs.get("target_id") or attrs.get("target_name"))
-        has_genes = bool(
-            attrs.get("gene_ids") or attrs.get("gene_symbols") or attrs.get("genes_raw")
-        )
-        if not has_target:
-            raise serializers.ValidationError("Provide target_id or target_name.")
-        if not has_genes:
-            raise serializers.ValidationError(
-                "Provide one of gene_ids, gene_symbols, or genes_raw."
-            )
-        return attrs
 
 
-class MetapathRankingRequestSerializer(BaseGeneTargetSerializer):
-    b = serializers.IntegerField(required=False, min_value=2, default=DEFAULT_B)
-    seed = serializers.IntegerField(required=False, default=42)
-
-
-class MetapathDrilldownRequestSerializer(BaseGeneTargetSerializer):
+class MetapathDrilldownRequestSerializer(QueryRequestSerializer):
     metapath = serializers.CharField()
-    path_top_k = serializers.IntegerField(required=False, min_value=1, default=500)
-    path_z_min = serializers.FloatField(required=False, default=DEFAULT_PATH_Z_MIN)
-    debug = serializers.BooleanField(required=False, default=False)
-
-
-class OverallSubgraphsRequestSerializer(BaseGeneTargetSerializer):
-    b = serializers.IntegerField(required=False, min_value=2, default=DEFAULT_B)
-    seed = serializers.IntegerField(required=False, default=42)
-    pool_z_min = serializers.FloatField(required=False, default=1.65)
-    top_n_paths = serializers.IntegerField(required=False, min_value=1, default=40)
-    top_n_shared_per_hop = serializers.IntegerField(required=False, min_value=1, default=15)
-    path_top_k = serializers.IntegerField(required=False, min_value=1, default=500)
-    path_z_min = serializers.FloatField(required=False, default=DEFAULT_PATH_Z_MIN)
 
 
 class ReferenceLookupSerializer(serializers.Serializer):
     q = serializers.CharField(required=False, allow_blank=True, default="")
     limit = serializers.IntegerField(required=False, min_value=1, max_value=5000, default=100)
+
+
+class BiologicalProcessSerializer(serializers.Serializer):
+    identifier = serializers.CharField()
+    name = serializers.CharField()
+
+
+class BiologicalProcessListSerializer(serializers.Serializer):
+    results = BiologicalProcessSerializer(many=True)
+
+
+class RandomGenesSerializer(serializers.Serializer):
+    genes = serializers.ListField(child=serializers.CharField())
+
+
+class MetapathRankingRowSerializer(serializers.Serializer):
+    metapath = serializers.CharField()
+    real_mean_score = serializers.FloatField()
+    null_mean_score = serializers.FloatField()
+    null_std_score = serializers.FloatField(allow_null=True)
+    diff = serializers.FloatField()
+    effect_size_z = serializers.FloatField(allow_null=True)
+    p_value = serializers.FloatField(allow_null=True)
+
+
+class MetapathRankingResponseSerializer(serializers.Serializer):
+    target_id = serializers.CharField()
+    gene_ids = serializers.ListField(child=serializers.IntegerField())
+    metapath_ranking = MetapathRankingRowSerializer(many=True)
+    elapsed_s = serializers.FloatField()
+
+
+class IntermediateSharingRowSerializer(serializers.Serializer):
+    intermediate_id = serializers.CharField()
+    intermediate = serializers.CharField()
+    n_genes_sharing = serializers.IntegerField()
+    gene_ids = serializers.CharField(help_text="Comma-separated Entrez IDs.")
+    genes = serializers.CharField(help_text="Comma-separated gene symbols.")
+
+
+class HeatmapAxisItemSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+
+
+class HeatmapSerializer(serializers.Serializer):
+    intermediates = HeatmapAxisItemSerializer(many=True)
+    genes = HeatmapAxisItemSerializer(many=True)
+    cells = serializers.ListField(
+        child=serializers.ListField(child=serializers.IntegerField()),
+        help_text="Rows follow intermediates, columns follow genes; 1 if the gene uses it.",
+    )
+
+
+class SubgraphNodeSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    node_id = serializers.CharField()
+    name = serializers.CharField()
+    type = serializers.CharField()
+    column = serializers.IntegerField()
+    label = serializers.CharField()
+    scale = serializers.FloatField()
+
+
+class SubgraphEdgeSerializer(serializers.Serializer):
+    source = serializers.CharField()
+    target = serializers.CharField()
+
+
+class SubgraphSerializer(serializers.Serializer):
+    title = serializers.CharField()
+    columns = serializers.ListField(child=serializers.CharField())
+    nodes = SubgraphNodeSerializer(many=True)
+    edges = SubgraphEdgeSerializer(many=True)
+
+
+class MetapathDrilldownResponseSerializer(serializers.Serializer):
+    target_id = serializers.CharField()
+    gene_ids = serializers.ListField(child=serializers.IntegerField())
+    metapath = serializers.CharField()
+    path_z_min = serializers.FloatField()
+    intermediate_sharing = IntermediateSharingRowSerializer(many=True)
+    heatmap = HeatmapSerializer(allow_null=True)
+    paths = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="gene, gene_id, metapath, path_rank, path_score and hop_N_id/type/name.",
+    )
+    subgraph = SubgraphSerializer(allow_null=True)
+    diagnostics = serializers.DictField()
+
+
+class OverallSubgraphsResponseSerializer(serializers.Serializer):
+    target_id = serializers.CharField()
+    gene_ids = serializers.ListField(child=serializers.IntegerField())
+    pooled_metapaths = serializers.ListField(child=serializers.CharField())
+    pool_z_min = serializers.FloatField()
+    pool_z_used = serializers.FloatField()
+    top_shared_subgraph = SubgraphSerializer(allow_null=True)
+    top_paths_subgraph = SubgraphSerializer(allow_null=True)

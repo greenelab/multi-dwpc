@@ -1,104 +1,101 @@
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections.abc import Callable
+from typing import Any
 
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status, viewsets
-from rest_framework.views import APIView
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
-from rest_framework.reverse import reverse
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
+from rest_framework.serializers import Serializer
+
+from src.null_bundle import BundleMismatchError
 
 from .serializers import (
+    BiologicalProcessListSerializer,
+    BiologicalProcessSerializer,
     MetapathDrilldownRequestSerializer,
-    MetapathRankingRequestSerializer,
-    OverallSubgraphsRequestSerializer,
+    MetapathDrilldownResponseSerializer,
+    MetapathRankingResponseSerializer,
+    OverallSubgraphsResponseSerializer,
+    QueryRequestSerializer,
+    RandomGenesSerializer,
     ReferenceLookupSerializer,
 )
 from .services import (
     list_biological_processes,
-    list_genes,
+    random_biological_process,
+    random_genes,
     run_metapath_drilldown,
     run_metapath_ranking,
     run_overall_subgraphs,
 )
 
 
-class ApiRootView(APIView):
-    """Browsable API landing page with concrete endpoint links."""
+class NullBundleUnavailable(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_code = "null_bundle_unavailable"
 
-    def get(self, request):
-        return Response(
-            OrderedDict(
-                [
-                    ("metapath_ranking", reverse("queries-metapath-ranking", request=request)),
-                    ("metapath_drilldown", reverse("queries-metapath-drilldown", request=request)),
-                    ("overall_subgraphs", reverse("queries-overall-subgraphs", request=request)),
-                    (
-                        "reference_biological_processes",
-                        reverse("reference-biological-processes", request=request),
-                    ),
-                    ("reference_genes", reverse("reference-genes", request=request)),
-                ]
-            )
-        )
+
+def _run_query(
+    serializer_class: type[Serializer],
+    request,
+    run: Callable[[dict[str, Any]], dict[str, Any]],
+) -> Response:
+    serializer = serializer_class(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        payload = run(serializer.validated_data)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    except BundleMismatchError as exc:
+        raise NullBundleUnavailable(str(exc)) from exc
+    return Response(payload, status=status.HTTP_200_OK)
 
 
 class QueryViewSet(viewsets.ViewSet):
+    @extend_schema(request=QueryRequestSerializer, responses=MetapathRankingResponseSerializer)
     @action(detail=False, methods=["post"], url_path="metapath-ranking")
     def metapath_ranking(self, request):
-        serializer = MetapathRankingRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        try:
-            payload = run_metapath_ranking(serializer.validated_data)
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
-        return Response(payload, status=status.HTTP_200_OK)
+        return _run_query(QueryRequestSerializer, request, run_metapath_ranking)
 
+    @extend_schema(
+        request=MetapathDrilldownRequestSerializer,
+        responses=MetapathDrilldownResponseSerializer,
+    )
     @action(detail=False, methods=["post"], url_path="metapath-drilldown")
     def metapath_drilldown(self, request):
-        serializer = MetapathDrilldownRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        try:
-            payload = run_metapath_drilldown(serializer.validated_data)
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
-        return Response(payload, status=status.HTTP_200_OK)
+        return _run_query(MetapathDrilldownRequestSerializer, request, run_metapath_drilldown)
 
+    @extend_schema(request=QueryRequestSerializer, responses=OverallSubgraphsResponseSerializer)
     @action(detail=False, methods=["post"], url_path="overall-subgraphs")
     def overall_subgraphs(self, request):
-        serializer = OverallSubgraphsRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        try:
-            payload = run_overall_subgraphs(serializer.validated_data)
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
-        return Response(payload, status=status.HTTP_200_OK)
+        return _run_query(QueryRequestSerializer, request, run_overall_subgraphs)
 
 
 class ReferenceViewSet(viewsets.ViewSet):
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("q", str, description="Substring of the name or GO identifier."),
+            OpenApiParameter("limit", int),
+        ],
+        responses=BiologicalProcessListSerializer,
+    )
     @action(detail=False, methods=["get"], url_path="biological-processes")
     def biological_processes(self, request):
         serializer = ReferenceLookupSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        payload = {
-            "results": list_biological_processes(
-                q=data.get("q", ""),
-                limit=data.get("limit", 100),
-            )
-        }
-        return Response(payload, status=status.HTTP_200_OK)
+        results = list_biological_processes(q=data["q"], limit=data["limit"])
+        return Response({"results": results}, status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=["get"], url_path="genes")
-    def genes(self, request):
-        serializer = ReferenceLookupSerializer(data=request.query_params)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-        payload = {
-            "results": list_genes(
-                q=data.get("q", ""),
-                limit=data.get("limit", 100),
-            )
-        }
-        return Response(payload, status=status.HTTP_200_OK)
+    @extend_schema(responses=BiologicalProcessSerializer)
+    @action(detail=False, methods=["get"], url_path="biological-processes/random")
+    def random_biological_process(self, request):
+        return Response(random_biological_process(), status=status.HTTP_200_OK)
+
+    @extend_schema(responses=RandomGenesSerializer)
+    @action(detail=False, methods=["get"], url_path="genes/random")
+    def random_genes(self, request):
+        return Response({"genes": random_genes()}, status=status.HTTP_200_OK)
