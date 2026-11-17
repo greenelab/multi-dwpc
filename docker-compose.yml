@@ -1,0 +1,43 @@
+services:
+  # streamlit:
+  #   restart: unless-stopped
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   image: multi-dwpc:latest
+  #   container_name: multi-dwpc-streamlit
+  #   ports:
+  #     - "8501:8501"
+  #   volumes:
+  #     - ./data/:/app/data/
+
+  streamlit-api:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: multi-dwpc:latest
+    container_name: multi-dwpc-streamlit-api
+    environment:
+      - DJANGO_DEBUG=1
+    ports:
+      - "8500:8000"
+    volumes:
+      - ./data/:/app/data/
+      - django_static:/opt/static/
+
+  frontend:
+    restart: unless-stopped
+    build:
+      context: ./frontend
+    image: multi-dwpc-frontend:latest
+    container_name: multi-dwpc-frontend
+    environment:
+      - API_PROXY_TARGET=http://streamlit-api:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - streamlit-api
+
+volumes:
+  django_static:

@@ -6,6 +6,10 @@ readme = "README.md"
 license = "BSD-2-Clause-Patent"
 requires-python = ">=3.13"
 dependencies = [
+    "django",
+    "django-cors-headers",
+    "djangorestframework",
+    "drf-spectacular>=0.27.0",
     "pandas",
     "numpy",
     "scipy",
@@ -23,6 +27,7 @@ dependencies = [
     "hetnetpy @ git+https://github.com/hetio/hetio.git@0a81e9ea675e2c20f235f5d74598053c1332cb85",
     "hetnet-analysis @ git+https://github.com/CU-DBMI/hetionet-analysis.git@f371064da1498ac984aa6ec6ed0ba2739c7b0259",
     "hetnetex-md @ git+https://github.com/tghosh30/HetNetEx-MD.git@26f5ba85bd9b9886eafebcbc544879e531f5262e",
+    "gunicorn>=26.2.0",
 ]
 
 [project.optional-dependencies]

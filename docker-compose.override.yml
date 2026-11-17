@@ -1,0 +1,21 @@
+services:
+  streamlit-api:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: multi-dwpc:latest
+    container_name: multi-dwpc-streamlit-api
+    environment:
+      - DJANGO_DEBUG=1
+      - DJANGO_CORS_ALLOWED_ORIGINS=http://localhost:5173
+    ports:
+      - "8500:8000"
+    volumes:
+      - ./data/:/app/data/
+      - ./api/:/app/api/
+      - django_static:/opt/static/
+
+  frontend:
+    volumes:
+      - ./frontend/src/:/app/src/

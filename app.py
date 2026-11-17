@@ -7,7 +7,11 @@ See ``docs/web_tool_plan_2026-04-23.md`` for scope.
 
 from __future__ import annotations
 
+import os
+import gc
+from collections import OrderedDict
 from pathlib import Path
+from time import perf_counter
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
@@ -40,6 +44,30 @@ DATA_DIR = REPO_ROOT / "data"
 NULL_BUNDLE_DIR = DATA_DIR / "null_bundle"
 SAMPLE_SIZE = 20
 SAMPLE_SEED = 7
+
+DWPC_RESIDENT_METAPATHS_ENV = "MULTI_DWPC_RESIDENT_METAPATHS"
+DWPC_RESIDENT_METAPATHS_DEFAULT = 1
+
+# set True to preload all G->BP matrices on first launch (slower startup, faster queries)
+# note that this uses an exorbitant amount of RAM (>24GB); i haven't been able to get it to work
+PRELOAD_DWPC_MATRICES = True
+
+
+def _resident_metapath_limit_from_env() -> int | None:
+    """Return max resident metapaths from env, or None for unbounded cache."""
+    raw = os.getenv(DWPC_RESIDENT_METAPATHS_ENV, "").strip()
+    if not raw:
+        return DWPC_RESIDENT_METAPATHS_DEFAULT
+
+    if raw.lower() in {"all", "unbounded", "none", "inf", "infinite"}:
+        return None
+
+    try:
+        value = int(raw)
+    except ValueError:
+        return DWPC_RESIDENT_METAPATHS_DEFAULT
+
+    return None if value <= 0 else value
 
 # Worked example: pyrimidine nucleotide catabolic process gene set (from year
 # 2016-vs-2024 pipeline output) + target BP. Used to pre-populate the form.
@@ -456,6 +484,7 @@ with st.sidebar:
     run = st.button("Run query", type="primary", disabled=not (target_id and genes_raw.strip()))
 
 if run:
+    query_start = perf_counter()
     gene_ids = parse_gene_input(genes_raw)
     if not gene_ids:
         st.error("No valid gene symbols or Entrez IDs parsed from input.")
@@ -471,11 +500,16 @@ if run:
     st.session_state["gene_ids"] = gene_ids
     st.session_state["target_id"] = target_id
     st.session_state["_drilldown_cache"] = {}
+    st.session_state["last_query_elapsed_s"] = perf_counter() - query_start
 
 z_df = st.session_state.get("z_df")
 if z_df is None:
     st.info("Enter a target and gene list in the sidebar, then run the query.")
     st.stop()
+
+last_query_elapsed_s = st.session_state.get("last_query_elapsed_s")
+if last_query_elapsed_s is not None:
+    st.caption(f"Last query runtime: {last_query_elapsed_s:.2f} seconds")
 
 with st.sidebar:
     st.header("Drill-down metapath")
