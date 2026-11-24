@@ -50,5 +50,28 @@ hetmatpy, transformed as `arcsinh(raw / raw_mean)` using
 matrix; later runs load the cache. Agreement with the Hetionet API values is
 tested in `tests/test_dwpc_validation.py` (`src/dwpc_validation.py`).
 
+`src/result_normalization.py` puts DWPC results from the two sources into one
+table layout. Direct results (`dwpc_<dataset>.csv`) already carry GO and Entrez
+IDs; API results (`res_<dataset>.csv`) carry Neo4j node IDs, which it maps to
+GO and Entrez IDs with `data/neo4j_bp_mapping.csv` and
+`data/neo4j_gene_mapping.csv`. It also reads the year, control (real, permuted
+or random) and replicate from dataset names such as
+`all_GO_positive_growth_2024_perm_001`.
+
+To compare direct DWPC with API DWPC on a sample of GO term-gene pairs:
+
+```bash
+python scripts/api/validate_dwpc_concordance.py \
+  --api-results output/dwpc_com/all_GO_positive_growth/results/res_all_GO_positive_growth_2016_real.csv
+```
+
+It samples 1000 pairs (`--n-samples-total`), split across metapaths of length
+2, 3 and 4, and writes `concordance_summary.csv` (per-metapath correlation and
+absolute differences), `concordance_samples.csv` and PDF plots to
+`output/dwpc_validation/all_GO_positive_growth/`. `--list-metapaths` lists the
+metapaths in the API file and `--metapath-api` checks one. The API results file
+comes from the Hetionet connectivity-search API; the script that queries it is
+not yet in this repository.
+
 The year and LV null-variance and rank-stability experiments are on the
 `refactor/year-lv-unify` branch and will be documented here when it merges.
